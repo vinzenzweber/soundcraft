@@ -232,10 +232,13 @@ fn fixed_more(app: &mut SoundApp, key: Key, m: Modifiers, mac: bool) -> bool {
             let _ = app.run(id, json!({}));
             true
         }
-        // With an edit selection (a selected clip makes one), Left/Right centre the Edit window on its start/end.
+        // Left/Right move the playhead 5 seconds back or forward, Alt+Left/Right 1 second.
         // Over the piano roll the arrows move its notes instead.
-        Key::ArrowLeft | Key::ArrowRight if plain && app.ui.window == MainWindow::Edit && !piano_roll_has_pointer(app) => {
-            centre_on_selection(app, key == Key::ArrowRight)
+        Key::ArrowLeft | Key::ArrowRight
+            if (plain || (m.alt && !m.command && !m.ctrl && !m.shift)) && app.ui.window == MainWindow::Edit && !piano_roll_has_pointer(app) =>
+        {
+            move_playhead(app, key == Key::ArrowRight, if m.alt { 1.0 } else { 5.0 });
+            true
         }
         // Commands Keyboard Focus: single-key editing (Edit window only).
         k if !m.command
@@ -398,19 +401,25 @@ fn tab_clip(app: &mut SoundApp, back: bool) {
     }
 }
 
-/// Scroll the Edit window so the edit selection's start (or `end`) is in its middle. Returns false, leaving
-/// the key unhandled, when there is only an insertion point.
-fn centre_on_selection(app: &mut SoundApp, end: bool) -> bool {
-    let s = app.engine.session();
-    let sel = s.edit.selection;
-    if sel.start >= sel.end {
-        return false;
+/// Move the playhead `seconds` back or forward. While playing it jumps; stopped, the insertion point moves and
+/// any selection collapses to it, so pressing again keeps going (a selected clip would otherwise pin it, as
+/// Rewind and Fast Forward start from the selection's start). The Edit window scrolls to keep it in view.
+fn move_playhead(app: &mut SoundApp, forward: bool, seconds: f64) {
+    if !app.is_playing() {
+        let start = app.engine.session().edit.selection.start;
+        let _ = app.run("edit.select", json!({"start": start}));
     }
+    let id = if forward { "transport.fast_forward" } else { "transport.rewind" };
+    let Some(at) = app.run(id, json!({"seconds": seconds})).ok().and_then(|r| r.get("at").and_then(serde_json::Value::as_i64)) else {
+        return;
+    };
+    let s = app.engine.session();
     let [x0, _, x1, _] = app.edit_layout.timeline;
-    let half = f64::from((x1 - x0).max(0.0)) / 2.0 * s.edit.zoom.samples_per_px.max(0.01);
-    let at = if end { sel.end } else { sel.start };
-    let _ = app.run("view.scroll", json!({"to": at.saturating_sub(soundcraft_time::to_samples(half)).max(0)}));
-    true
+    let width = soundcraft_time::to_samples(f64::from((x1 - x0).max(0.0)) * s.edit.zoom.samples_per_px.max(0.01));
+    let first = s.edit.zoom.scroll;
+    if at < first || at > first.saturating_add(width) {
+        let _ = app.run("view.scroll", json!({"to": at.saturating_sub(width / 2).max(0)}));
+    }
 }
 
 /// Whether the pointer is over the MIDI editor, whose piano roll moves the selected notes with the arrow keys.
