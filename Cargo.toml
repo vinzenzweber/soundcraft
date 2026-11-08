@@ -113,3 +113,18 @@ eframe = { git = "https://github.com/storytold/egui.git", rev = "6d518fc79968157
 egui_demo_lib = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
 egui_inspection = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
 winit = { git = "https://github.com/storytold/winit.git", rev = "a517b3846ee8457d84ee4975110bfda6797c44dc" }
+# wgpu 30.0.1 plus gfx-rs/wgpu#10574, a one-line wgpu-hal fix: passthrough MSL is compiled with the
+# device's Metal language version. Without it macOS 15 compiles the lyrics model's kernels as MSL 3.1,
+# which rejects their lambdas, and transcription stalls. The whole wgpu 30 family comes from the same
+# commit because wgpu-hal depends on its siblings by path. Remove once a wgpu 30.x release has the fix.
+naga = { git = "https://github.com/djmareluki/wgpu.git", rev = "256831d773831fd3a62cc54134a31b5a91036b3e" }
+naga-types = { git = "https://github.com/djmareluki/wgpu.git", rev = "256831d773831fd3a62cc54134a31b5a91036b3e" }
+wgpu = { git = "https://github.com/djmareluki/wgpu.git", rev = "256831d773831fd3a62cc54134a31b5a91036b3e" }
+wgpu-core = { git = "https://github.com/djmareluki/wgpu.git", rev = "256831d773831fd3a62cc54134a31b5a91036b3e" }
+wgpu-core-deps-apple = { git = "https://github.com/djmareluki/wgpu.git", rev = "256831d773831fd3a62cc54134a31b5a91036b3e" }
+wgpu-core-deps-emscripten = { git = "https://github.com/djmareluki/wgpu.git", rev = "256831d773831fd3a62cc54134a31b5a91036b3e" }
+wgpu-core-deps-wasm = { git = "https://github.com/djmareluki/wgpu.git", rev = "256831d773831fd3a62cc54134a31b5a91036b3e" }
+wgpu-core-deps-windows-linux-android = { git = "https://github.com/djmareluki/wgpu.git", rev = "256831d773831fd3a62cc54134a31b5a91036b3e" }
+wgpu-hal = { git = "https://github.com/djmareluki/wgpu.git", rev = "256831d773831fd3a62cc54134a31b5a91036b3e" }
+wgpu-naga-bridge = { git = "https://github.com/djmareluki/wgpu.git", rev = "256831d773831fd3a62cc54134a31b5a91036b3e" }
+wgpu-types = { git = "https://github.com/djmareluki/wgpu.git", rev = "256831d773831fd3a62cc54134a31b5a91036b3e" }
