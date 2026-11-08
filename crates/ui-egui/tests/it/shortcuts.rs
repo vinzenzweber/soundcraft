@@ -219,3 +219,30 @@ fn a_midi_editor_behind_another_tab_leaves_the_arrows_to_the_edit_window() {
     let (x, middle) = x_and_middle(&app, clip.start);
     assert!((x - middle).abs() < 1.0, "Left: the clip start at {x}, the middle at {middle}");
 }
+
+fn send(ctx: &egui::Context, app: &mut SoundApp, event: egui::Event) {
+    ctx.run_ui(egui::RawInput { events: vec![event], ..Default::default() }, |ui| shortcuts::handle(app, ui.ctx())).textures_delta.clear();
+}
+
+/// egui-winit reports Cmd+X/C/V only as clipboard events, never as key presses (#1408): they cut, copy and paste
+/// the edit selection like the Edit menu does.
+#[test]
+fn clipboard_events_cut_copy_and_paste_the_edit_selection() {
+    let mut app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
+    let ctx = egui::Context::default();
+    let kick = app.engine.session().track_by_name("Kick").unwrap().id;
+    let last_edit = |app: &mut SoundApp| app.run("session.inspect", json!({})).unwrap()["undo"].clone();
+    app.run("edit.select", json!({"tracks": [kick.0], "start": 0, "end": 24_000})).unwrap();
+
+    send(&ctx, &mut app, egui::Event::Paste("text on the system clipboard".into()));
+    assert_eq!(last_edit(&mut app), json!(null), "nothing copied yet: Paste has nothing to paste");
+    send(&ctx, &mut app, egui::Event::Copy);
+    app.run("edit.select", json!({"tracks": [kick.0], "start": 480_000})).unwrap();
+    send(&ctx, &mut app, egui::Event::Paste("text on the system clipboard".into()));
+    assert_eq!(last_edit(&mut app), json!("Paste"), "Cmd+C then Cmd+V pasted");
+    let sel = app.engine.session().edit.selection;
+    assert_eq!((sel.start, sel.end), (480_000, 504_000), "the copied 24 000 samples landed at the insertion point");
+
+    send(&ctx, &mut app, egui::Event::Cut);
+    assert_eq!(last_edit(&mut app), json!("Cut"), "Cmd+X cut the selection");
+}

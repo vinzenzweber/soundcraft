@@ -84,6 +84,23 @@ pub fn handle(app: &mut SoundApp, ctx: &egui::Context) {
             })
             .collect()
     });
+    // egui-winit turns Cmd+X/C/V (Ctrl+X/C/V off macOS) into clipboard events and drops the key press, so
+    // the Cut/Copy/Paste shortcuts below never see a key (#1408). Paste arrives only while the system
+    // clipboard holds text or an image; its contents are ignored, as SoundCraft keeps its own clipboard.
+    let clipboard: Vec<&'static str> = ctx.input(|i| {
+        i.events
+            .iter()
+            .filter_map(|e| match e {
+                egui::Event::Cut => Some("edit.cut"),
+                egui::Event::Copy => Some("edit.copy"),
+                egui::Event::Paste(_) | egui::Event::PasteImage(_) => Some("edit.paste"),
+                _ => None,
+            })
+            .collect()
+    });
+    for id in clipboard {
+        let _ = app.run(id, json!({}));
+    }
     // Cmd and Ctrl are separate keys only on macOS (asked at runtime so the web build in a Mac browser agrees).
     let mac = ctx.os() == egui::os::OperatingSystem::Mac;
     for (key, mods) in events {
