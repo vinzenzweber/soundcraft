@@ -237,6 +237,12 @@ fn fixed_more(app: &mut SoundApp, key: Key, m: Modifiers, mac: bool) -> bool {
         Key::ArrowLeft | Key::ArrowRight if plain && app.ui.window == MainWindow::Edit && !piano_roll_has_pointer(app) => {
             centre_on_selection(app, key == Key::ArrowRight)
         }
+        // Delete and Backspace clear the edit selection like Edit › Clear (Cmd+B): a selected clip goes, and in
+        // Shuffle the rest of the track closes up. Notes selected in the open MIDI editor are its own to delete.
+        Key::Delete | Key::Backspace if plain && app.ui.window == MainWindow::Edit && !(app.ui.show_midi_editor && !app.midi.selected.is_empty()) => {
+            let _ = app.run("edit.clear", json!({}));
+            true
+        }
         // Commands Keyboard Focus: single-key editing (Edit window only).
         k if !m.command
             && !m.alt

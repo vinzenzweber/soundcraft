@@ -219,3 +219,19 @@ fn a_midi_editor_behind_another_tab_leaves_the_arrows_to_the_edit_window() {
     let (x, middle) = x_and_middle(&app, clip.start);
     assert!((x - middle).abs() < 1.0, "Left: the clip start at {x}, the middle at {middle}");
 }
+
+/// Delete and Backspace clear the edit selection like Edit › Clear: a selected clip is removed.
+#[test]
+fn delete_and_backspace_remove_the_selected_clip() {
+    for key in [Key::Delete, Key::Backspace] {
+        let mut app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
+        let ctx = egui::Context::default();
+        let kick = app.engine.session().track_by_name("Kick").unwrap();
+        let (track, clip, before) = (kick.id, kick.clips()[0].id, kick.clips().len());
+        app.run("edit.select", json!({"clips": [clip.0]})).unwrap();
+        press(&ctx, &mut app, key, Modifiers::NONE);
+        let after = app.engine.session().track(track).unwrap().clips();
+        assert_eq!(after.len(), before - 1, "{key:?} removed the selected clip");
+        assert!(after.iter().all(|c| c.id != clip), "{key:?} removed that clip");
+    }
+}
