@@ -18,6 +18,7 @@ mod aiff;
 mod buffer;
 mod caf;
 mod flac;
+mod mp3;
 mod mp4;
 mod pcm;
 pub mod peaks;
@@ -70,7 +71,7 @@ impl FileFormat {
     pub const READ: &'static [FileFormat] =
         &[FileFormat::Wav, FileFormat::Aiff, FileFormat::Flac, FileFormat::Mp3, FileFormat::Ogg, FileFormat::Aac, FileFormat::Caf, FileFormat::Other];
     /// The formats [`encode`] writes.
-    pub const WRITE: &'static [FileFormat] = &[FileFormat::Wav, FileFormat::Aiff, FileFormat::Flac];
+    pub const WRITE: &'static [FileFormat] = &[FileFormat::Wav, FileFormat::Aiff, FileFormat::Flac, FileFormat::Mp3];
 
     /// The extensions that name this format, lower case and without the dot; the first is the one
     /// a new file gets. ALAC shares AAC's MP4 container, so a `.m4a` name reads as AAC until the
@@ -143,6 +144,7 @@ impl FileFormat {
             FileFormat::Wav => &["wav", "wave", "bwf"],
             FileFormat::Aiff => &["aif", "aiff"],
             FileFormat::Flac => &["flac"],
+            FileFormat::Mp3 => &["mp3"],
             _ => &[],
         }
     }
@@ -223,18 +225,28 @@ pub enum BitDepth {
 /// Options for [`encode`].
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EncodeOptions {
-    /// `Wav`, `Aiff` or `Flac`; anything else is [`AudioError::Unsupported`].
+    /// `Wav`, `Aiff`, `Flac` or `Mp3`; anything else is [`AudioError::Unsupported`].
     pub format: FileFormat,
+    /// Ignored by MP3, which has no fixed bit depth.
     pub bit_depth: BitDepth,
     /// Add TPDF dither when quantizing to an integer depth.
     pub dither: bool,
     /// Write a BWF `bext` chunk (WAV only; ignored for other formats).
     pub bwf: Option<BwfInfo>,
+    /// MP3 bitrate in kbps (one of [`MP3_BITRATES`]); `None` is [`MP3_DEFAULT_KBPS`]. Ignored for
+    /// other formats.
+    #[serde(default)]
+    pub bitrate_kbps: Option<u32>,
 }
+
+/// The constant bitrates (kbps) an MP3 can be written at.
+pub const MP3_BITRATES: [u32; 14] = mp3::BITRATES;
+/// The MP3 bitrate (kbps) used when [`EncodeOptions::bitrate_kbps`] is `None`.
+pub const MP3_DEFAULT_KBPS: u32 = mp3::DEFAULT_KBPS;
 
 impl Default for EncodeOptions {
     fn default() -> Self {
-        Self { format: FileFormat::Wav, bit_depth: BitDepth::Int24, dither: false, bwf: None }
+        Self { format: FileFormat::Wav, bit_depth: BitDepth::Int24, dither: false, bwf: None, bitrate_kbps: None }
     }
 }
 
@@ -348,12 +360,13 @@ pub fn decode(bytes: &[u8], ext_hint: Option<&str>) -> Result<(AudioInfo, AudioB
     }
 }
 
-/// Encode `buf` as WAV/BWF, AIFF/AIFF-C or FLAC. Samples are clamped to [-1, 1].
+/// Encode `buf` as WAV/BWF, AIFF/AIFF-C, FLAC or MP3. Samples are clamped to [-1, 1].
 pub fn encode(buf: &AudioBuffer, opts: &EncodeOptions) -> Result<Vec<u8>> {
     match opts.format {
         FileFormat::Wav => wav::encode(buf, opts.bit_depth, opts.dither, opts.bwf.as_ref(), false, None),
         FileFormat::Aiff => aiff::encode(buf, opts.bit_depth, opts.dither),
         FileFormat::Flac => flac::encode(buf, opts.bit_depth, opts.dither),
+        FileFormat::Mp3 => mp3::encode(buf, opts.bitrate_kbps),
         other => Err(AudioError::Unsupported(format!("encoding {other:?} is not supported"))),
     }
 }
@@ -388,6 +401,7 @@ enum Writer<W> {
     Wav(wav::Writer<W>),
     Aiff(aiff::Writer<W>),
     Flac(flac::Writer<W>),
+    Mp3(mp3::Writer<W>),
 }
 
 impl<W: Write + Seek> FileEncoder<W> {
@@ -406,6 +420,7 @@ impl<W: Write + Seek> FileEncoder<W> {
             )?),
             FileFormat::Aiff => Writer::Aiff(aiff::Writer::new(out, channels, sample_rate, depth, dither)?),
             FileFormat::Flac => Writer::Flac(flac::Writer::new(out, channels, sample_rate, depth, dither)?),
+            FileFormat::Mp3 => Writer::Mp3(mp3::Writer::new(out, channels, sample_rate, opts.bitrate_kbps)?),
             other => return Err(AudioError::Unsupported(format!("encoding {other:?} is not supported"))),
         }))
     }
@@ -417,6 +432,7 @@ impl<W: Write + Seek> FileEncoder<W> {
             Writer::Wav(w) => w.check_room(frames),
             Writer::Aiff(w) => w.check_room(frames),
             Writer::Flac(w) => w.check_room(frames),
+            Writer::Mp3(w) => w.check_room(frames),
         }
         .map(drop)
     }
@@ -430,6 +446,7 @@ impl<W: Write + Seek> FileEncoder<W> {
             Writer::Wav(w) => w.write(block, frames),
             Writer::Aiff(w) => w.write(block, frames),
             Writer::Flac(w) => w.write(block, frames),
+            Writer::Mp3(w) => w.write(block, frames),
         }
     }
 
@@ -439,6 +456,7 @@ impl<W: Write + Seek> FileEncoder<W> {
             Writer::Wav(w) => w.finish(),
             Writer::Aiff(w) => w.finish(),
             Writer::Flac(w) => w.finish(),
+            Writer::Mp3(w) => w.finish(),
         }
     }
 }

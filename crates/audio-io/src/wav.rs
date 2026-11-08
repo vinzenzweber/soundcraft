@@ -505,7 +505,10 @@ pub(crate) fn header(
     let block_align = u16::try_from(block).map_err(|_| AudioError::Encode("too many channels for WAV".into()))?;
     let byte_rate = sample_rate.checked_mul(u32::from(block_align)).ok_or_else(|| AudioError::Encode("WAV byte rate overflow".into()))?;
     let data_len = u64::from(block_align).checked_mul(frames).ok_or_else(|| AudioError::TooLarge("data size overflow".into()))?;
-    let extensible = channels > 2 || bits > 16 || mask.is_some_and(|m| m != channel_mask(channels));
+    // 24- and 32-bit mono and stereo keep the plain PCM/float header: DJ players (CDJs up to the
+    // CDJ-3000) are reported to refuse some WAVE_FORMAT_EXTENSIBLE files, and every reader takes
+    // plain PCM at these depths. More channels, or a custom speaker layout, need the extensible form.
+    let extensible = channels > 2 || mask.is_some_and(|m| m != channel_mask(channels));
     let fmt_tag = if is_float { WAVE_FORMAT_IEEE_FLOAT } else { WAVE_FORMAT_PCM };
 
     let mut fmt = Vec::with_capacity(40);

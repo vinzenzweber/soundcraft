@@ -703,7 +703,13 @@ fn write_session(session: &Session, path: &str, overwrite: bool) -> Result<(Sess
     let mut written = 0;
     for (stem, audio, sources) in &pending {
         make_dir(&audio_dir)?;
-        let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: soundcraft_audio_io::BitDepth::Float32, dither: false, bwf: None };
+        let opts = EncodeOptions {
+            format: FileFormat::Wav,
+            bit_depth: soundcraft_audio_io::BitDepth::Float32,
+            dither: false,
+            bwf: None,
+            bitrate_kbps: None,
+        };
         let bytes = soundcraft_audio_io::encode(&audio.buffer, &opts).map_err(|err| EngineError::Io(err.to_string()))?;
         let (name, new) = store_wav(&audio_dir, stem, &bytes)?;
         for &i in sources {

@@ -4,6 +4,7 @@ mod decode_read_list;
 mod file_format;
 mod float_headroom;
 mod malformed;
+mod mp3;
 mod mp4_length;
 mod roundtrip;
 mod stream;

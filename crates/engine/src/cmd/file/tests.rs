@@ -123,7 +123,7 @@ fn bounce_refuses_formats_it_cannot_write() {
     let mut e = Engine::default();
     let dir = std::env::temp_dir().join(format!("sc-bounce-ext-{}", std::process::id()));
     assert!(std::fs::create_dir_all(&dir).is_ok());
-    for name in ["mix.mp3", "mix.ogg", "mix.xyz"] {
+    for name in ["mix.ogg", "mix.xyz"] {
         let path = dir.join(name);
         let err = e.execute("file.bounce_mix", &json!({"path": path.to_string_lossy(), "start": 0, "end": 480})).map(|_| ()).unwrap_err();
         assert!(err.to_string().contains("supported: wav"), "{name}: {err}");
@@ -131,6 +131,29 @@ fn bounce_refuses_formats_it_cannot_write() {
     }
     let ok = dir.join("mix.flac");
     assert!(e.execute("file.bounce_mix", &json!({"path": ok.to_string_lossy(), "start": 0, "end": 480})).is_ok());
+    assert!(std::fs::remove_dir_all(&dir).is_ok());
+}
+
+#[test]
+fn bounce_writes_cdj_ready_mp3() {
+    let mut e = Engine::default();
+    let dir = std::env::temp_dir().join(format!("sc-bounce-mp3-{}", std::process::id()));
+    assert!(std::fs::create_dir_all(&dir).is_ok());
+    let path = dir.join("mix.mp3");
+    // A whole second at the session rate: gapless decoding gives exactly that many frames back.
+    let v = e.execute("file.bounce_mix", &json!({"path": path.to_string_lossy(), "start": 0, "end": 48_000})).unwrap();
+    assert!(v.is_object(), "{v}");
+    let bytes = std::fs::read(&path).unwrap();
+    let (info, _) = soundcraft_audio_io::decode(&bytes, None).unwrap();
+    assert_eq!((info.format, info.frames, info.sample_rate), (soundcraft_audio_io::FileFormat::Mp3, 48_000, 48_000));
+    // 320 kbps constant bitrate by default.
+    let kbps = bytes.len() as f64 * 8.0 / 1000.0;
+    assert!((kbps / 320.0 - 1.0).abs() < 0.1, "{kbps} kbps");
+    let slow = dir.join("slow.mp3");
+    assert!(e.execute("file.bounce_mix", &json!({"path": slow.to_string_lossy(), "start": 0, "end": 48_000, "bitrate": "128"})).is_ok());
+    assert!(std::fs::read(&slow).unwrap().len() < bytes.len() / 2);
+    let err = e.execute("file.bounce_mix", &json!({"path": slow.to_string_lossy(), "start": 0, "end": 480, "bitrate": 100})).unwrap_err();
+    assert!(err.to_string().contains("`bitrate` must be one of"), "{err}");
     assert!(std::fs::remove_dir_all(&dir).is_ok());
 }
 

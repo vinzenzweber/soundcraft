@@ -496,15 +496,21 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
                                 ui.selectable_value(format, f, f.name());
                             }
                         });
-                        craft_ui::ComboBox::from_label("Bit Depth").selected_text(format!("{bit_depth}-bit")).show_ui(ui, |ui| {
-                            for b in ["16", "24", "32f"] {
-                                ui.selectable_value(bit_depth, b.to_string(), format!("{b}-bit"));
-                            }
-                        });
+                        if *format == FileFormat::Mp3 {
+                            ui.label("320 kbps CBR").on_hover_text(
+                                "Constant 320 kbps with a gapless header: plays on CDJs (2000NXS2, 3000, 3000X) and in DJ software, starting exactly on time.",
+                            );
+                        } else {
+                            craft_ui::ComboBox::from_label("Bit Depth").selected_text(format!("{bit_depth}-bit")).show_ui(ui, |ui| {
+                                for b in ["16", "24", "32f"] {
+                                    ui.selectable_value(bit_depth, b.to_string(), format!("{b}-bit"));
+                                }
+                            });
+                        }
                     });
                     crate::widgets::checkbox(ui, normalize, "Normalize to -0.1 dBFS");
                     // 32-bit float keeps every sample as it is: there is nothing to dither.
-                    ui.add_enabled_ui(bit_depth.as_str() != "32f", |ui| {
+                    ui.add_enabled_ui(bit_depth.as_str() != "32f" && *format != FileFormat::Mp3, |ui| {
                         crate::widgets::checkbox(ui, dither, "Dither (TPDF)")
                             .on_hover_text("Adds ±1 LSB triangular dither when writing 16- or 24-bit files. Leave it off when the master chain already dithers.");
                     });

@@ -47,7 +47,7 @@ fn wav_and_aiff_roundtrip_all_depths_and_layouts() {
             for channels in [1, 2, 6] {
                 for dither in [false, true] {
                     let src = sine(48_000, channels, 4801);
-                    let opts = EncodeOptions { format, bit_depth: depth, dither, bwf: None };
+                    let opts = EncodeOptions { format, bit_depth: depth, dither, bwf: None, bitrate_kbps: None };
                     let bytes = encode(&src, &opts).unwrap();
                     assert_eq!(detect_format(&bytes, None), format);
                     let info = probe(&bytes, None).unwrap();
@@ -73,8 +73,10 @@ fn flac_roundtrip_is_lossless_vs_wav() {
         for channels in [1, 2, 6] {
             // Spans several blocks plus a short final block.
             let src = sine(44_100, channels, 4096 * 2 + 17);
-            let wav = encode(&src, &EncodeOptions { format: FileFormat::Wav, bit_depth: depth, dither: false, bwf: None }).unwrap();
-            let flac = encode(&src, &EncodeOptions { format: FileFormat::Flac, bit_depth: depth, dither: false, bwf: None }).unwrap();
+            let wav =
+                encode(&src, &EncodeOptions { format: FileFormat::Wav, bit_depth: depth, dither: false, bwf: None, bitrate_kbps: None }).unwrap();
+            let flac =
+                encode(&src, &EncodeOptions { format: FileFormat::Flac, bit_depth: depth, dither: false, bwf: None, bitrate_kbps: None }).unwrap();
             assert_eq!(detect_format(&flac, None), FileFormat::Flac);
             let info = probe(&flac, None).unwrap();
             assert_eq!(info.format, FileFormat::Flac);
@@ -103,7 +105,7 @@ fn flac_handles_silence_noise_full_scale_and_odd_rates() {
     }
     for depth in [BitDepth::Int16, BitDepth::Int24, BitDepth::Int32] {
         for dither in [false, true] {
-            let opts = EncodeOptions { format: FileFormat::Flac, bit_depth: depth, dither, bwf: None };
+            let opts = EncodeOptions { format: FileFormat::Flac, bit_depth: depth, dither, bwf: None, bitrate_kbps: None };
             let flac = encode(&b, &opts).unwrap();
             let (info, out) = decode(&flac, None).unwrap();
             assert_eq!(info.sample_rate, 37_123);
@@ -116,7 +118,7 @@ fn flac_handles_silence_noise_full_scale_and_odd_rates() {
 
 #[test]
 fn flac_rejects_unsupported_layouts() {
-    let opts = EncodeOptions { format: FileFormat::Flac, bit_depth: BitDepth::Float32, dither: false, bwf: None };
+    let opts = EncodeOptions { format: FileFormat::Flac, bit_depth: BitDepth::Float32, dither: false, bwf: None, bitrate_kbps: None };
     assert!(encode(&sine(48_000, 2, 10), &opts).is_err());
     let opts = EncodeOptions { bit_depth: BitDepth::Int16, ..opts };
     assert!(encode(&sine(48_000, 9, 10), &opts).is_err());
@@ -139,7 +141,7 @@ fn bwf_roundtrip() {
     };
     let src = sine(96_000, 2, 1000);
     for depth in DEPTHS {
-        let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: depth, dither: false, bwf: Some(bwf.clone()) };
+        let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: depth, dither: false, bwf: Some(bwf.clone()), bitrate_kbps: None };
         let bytes = encode(&src, &opts).unwrap();
         let info = probe(&bytes, None).unwrap();
         assert_eq!(info.bwf.as_ref(), Some(&bwf));
@@ -162,12 +164,19 @@ fn bwf_roundtrip() {
 #[test]
 fn wav_header_layout() {
     let b = encode(&sine(44_100, 2, 10), &EncodeOptions { bit_depth: BitDepth::Int16, ..EncodeOptions::default() }).unwrap();
-    // Plain PCM for 16-bit stereo; extensible otherwise.
-    let fmt = b.windows(4).position(|w| w == b"fmt ").unwrap();
-    assert_eq!(u16::from_le_bytes([b[fmt + 8], b[fmt + 9]]), 1);
+    // Plain PCM for mono and stereo at any integer depth (CDJs refuse some extensible WAVs),
+    // plain IEEE float for 32-bit float, and extensible only for more than two channels.
+    let tag = |b: &[u8]| {
+        let fmt = b.windows(4).position(|w| w == b"fmt ").unwrap();
+        u16::from_le_bytes([b[fmt + 8], b[fmt + 9]])
+    };
+    assert_eq!(tag(&b), 1);
+    let float = encode(&sine(44_100, 2, 10), &EncodeOptions { bit_depth: BitDepth::Float32, ..EncodeOptions::default() }).unwrap();
+    assert_eq!(tag(&float), 3);
+    let surround = encode(&sine(44_100, 6, 10), &EncodeOptions::default()).unwrap();
+    assert_eq!(tag(&surround), 0xFFFE);
     let b = encode(&sine(44_100, 2, 10), &EncodeOptions::default()).unwrap();
-    let fmt = b.windows(4).position(|w| w == b"fmt ").unwrap();
-    assert_eq!(u16::from_le_bytes([b[fmt + 8], b[fmt + 9]]), 0xFFFE);
+    assert_eq!(tag(&b), 1, "24-bit stereo");
     let riff = u32::from_le_bytes([b[4], b[5], b[6], b[7]]) as usize;
     assert_eq!(riff + 8, b.len());
     // Odd data length (24-bit mono, odd frames) gets a pad byte.
@@ -202,7 +211,7 @@ fn unusual_sample_rates_roundtrip() {
 fn encode_rejects_bad_buffers_and_formats() {
     assert!(encode(&AudioBuffer::default(), &EncodeOptions::default()).is_err());
     assert!(encode(&AudioBuffer::new(0, 2, 10), &EncodeOptions::default()).is_err());
-    for f in [FileFormat::Mp3, FileFormat::Ogg, FileFormat::Aac, FileFormat::Alac, FileFormat::Caf, FileFormat::Other] {
+    for f in [FileFormat::Ogg, FileFormat::Aac, FileFormat::Alac, FileFormat::Caf, FileFormat::Other] {
         assert!(encode(&sine(48_000, 1, 10), &EncodeOptions { format: f, ..EncodeOptions::default() }).is_err());
     }
     // Non-finite samples are sanitized; only integer output clips finite samples.
@@ -252,7 +261,7 @@ fn serde_types_roundtrip() {
 #[test]
 fn multichannel_wav_speaker_masks() {
     let buf = |n: usize| AudioBuffer { sample_rate: 48_000, channels: (0..n).map(|c| vec![0.01 * c as f32; 64]).collect() };
-    let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Int24, dither: false, bwf: None };
+    let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Int24, dither: false, bwf: None, bitrate_kbps: None };
     for (n, mask) in [(6usize, 0x3Fu32), (8, 0x63F), (12, 0x2_D63F)] {
         let bytes = soundcraft_audio_io::encode(&buf(n), &opts).unwrap();
         assert_eq!(soundcraft_audio_io::wav_channel_mask(&bytes), Some(mask), "{n} channels");

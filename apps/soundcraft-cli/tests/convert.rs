@@ -20,7 +20,7 @@ fn write_wav16(path: &Path, samples: &[i16]) {
     for (d, s) in buf.channels[0].iter_mut().zip(samples) {
         *d = f32::from(*s) / 32768.0;
     }
-    let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Int16, dither: false, bwf: None };
+    let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Int16, dither: false, bwf: None, bitrate_kbps: None };
     std::fs::write(path, soundcraft_audio_io::encode(&buf, &opts).unwrap()).unwrap();
 }
 
@@ -81,7 +81,7 @@ fn convert_dithers_when_reducing_depth_unless_told_not_to() {
     for (i, s) in buf.channels[0].iter_mut().enumerate() {
         *s = 0.3 / 32768.0 * (i as f32 * 0.01).sin();
     }
-    let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Int24, dither: false, bwf: None };
+    let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Int24, dither: false, bwf: None, bitrate_kbps: None };
     std::fs::write(&src, soundcraft_audio_io::encode(&buf, &opts).unwrap()).unwrap();
 
     let dithered = dir.join("d16.wav");
@@ -108,7 +108,7 @@ fn convert_keeps_the_bwf_time_stamp() {
         ..Default::default()
     };
     let buf = AudioBuffer::new(48_000, 1, 4800);
-    let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Int24, dither: false, bwf: Some(bwf.clone()) };
+    let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Int24, dither: false, bwf: Some(bwf.clone()), bitrate_kbps: None };
     std::fs::write(&src, soundcraft_audio_io::encode(&buf, &opts).unwrap()).unwrap();
     let bext = |p: &Path| soundcraft_audio_io::probe(&std::fs::read(p).unwrap(), None).unwrap().bwf;
 

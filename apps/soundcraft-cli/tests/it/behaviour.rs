@@ -37,7 +37,7 @@ fn sandbox(tag: &str) -> PathBuf {
     for (i, d) in buf.channels[0].iter_mut().enumerate() {
         *d = i as f32 / 400.0;
     }
-    let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Int16, dither: false, bwf: None };
+    let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Int16, dither: false, bwf: None, bitrate_kbps: None };
     std::fs::write(dir.join("in.wav"), soundcraft_audio_io::encode(&buf, &opts).unwrap()).unwrap();
     std::fs::write(dir.join("s.txt"), "track.new {}\n").unwrap();
     dir
@@ -186,7 +186,10 @@ fn repeated_flags_are_usage_errors_in_either_spelling() {
 fn convert_input_and_output_errors() {
     let dir = sandbox("convert-io");
     assert_fails(&invoke(&dir, &["convert", "nope.wav", "o.wav"]), &format!("nope.wav: {}", not_found()));
-    assert_fails(&invoke(&dir, &["convert", "in.wav", "o.xyz"]), "o.xyz: cannot write `.xyz` files (supported: wav, wave, bwf, aif, aiff, flac)");
+    assert_fails(
+        &invoke(&dir, &["convert", "in.wav", "o.xyz"]),
+        "o.xyz: cannot write `.xyz` files (supported: wav, wave, bwf, aif, aiff, flac, mp3)",
+    );
 }
 
 #[test]

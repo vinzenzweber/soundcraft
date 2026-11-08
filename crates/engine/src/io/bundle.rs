@@ -58,7 +58,13 @@ fn session_bundle_within(session: &Session, limits: BundleLimits) -> Result<(Vec
             target = format!("Audio Files/{base}_{k:02}.wav");
             k += 1;
         }
-        let opts_wav = EncodeOptions { format: FileFormat::Wav, bit_depth: soundcraft_audio_io::BitDepth::Float32, dither: false, bwf: None };
+        let opts_wav = EncodeOptions {
+            format: FileFormat::Wav,
+            bit_depth: soundcraft_audio_io::BitDepth::Float32,
+            dither: false,
+            bwf: None,
+            bitrate_kbps: None,
+        };
         let bytes = soundcraft_audio_io::encode(&audio.buffer, &opts_wav).map_err(|err| EngineError::Io(err.to_string()))?;
         fits(bytes.len())?;
         w.start_file(target.as_str(), opts).map_err(zerr)?;

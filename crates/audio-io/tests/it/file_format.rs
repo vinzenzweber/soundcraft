@@ -23,8 +23,8 @@ fn every_read_and_write_format_round_trips_through_its_extensions() {
 
 #[test]
 fn only_names_whose_readers_expect_the_encoder_output_are_writable() {
-    assert_eq!(FileFormat::writable_extensions(), ["wav", "wave", "bwf", "aif", "aiff", "flac"]);
-    for read_only in ["rf64", "aifc", "mp3", "ogg", "m4a", "mkv"] {
+    assert_eq!(FileFormat::writable_extensions(), ["wav", "wave", "bwf", "aif", "aiff", "flac", "mp3"]);
+    for read_only in ["rf64", "aifc", "mp2", "ogg", "m4a", "mkv"] {
         assert!(FileFormat::from_extension(read_only).is_some(), "{read_only}");
         assert_eq!(FileFormat::from_write_extension(read_only), None, "{read_only}");
     }

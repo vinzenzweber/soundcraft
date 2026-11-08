@@ -106,7 +106,7 @@ fn commit_preserves_bus_and_send_audio_after_undo_reopen_and_wav_export() {
         assert_audio_eq(&committed_audio(&reopened, committed).channels, &committed_audio(&e, committed).channels);
         assert_audio_eq(&soundcraft_mix::render_range(reopened.session(), range, 64), &before);
 
-        let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Float32, dither: false, bwf: None };
+        let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Float32, dither: false, bwf: None, bitrate_kbps: None };
         let wav_path = dir.join("mix.wav");
         io::Bounce::new(reopened.session_arc(), &wav_path, range, &opts, None, false, false).unwrap().run().unwrap();
         let wav = std::fs::read(&wav_path).unwrap();
