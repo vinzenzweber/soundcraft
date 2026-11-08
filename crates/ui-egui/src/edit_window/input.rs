@@ -529,6 +529,25 @@ fn clip_context_menu(app: &mut SoundApp, ui: &mut Ui, clip: Option<ClipId>) {
         }
     }
     ui.separator();
+    let audio = app.engine.session().find_clip(c).is_some_and(|(_, x)| x.is_audio());
+    if ui
+        .add_enabled(audio, egui::Button::new("Stem Separation..."))
+        .on_hover_text("Split into vocals, drums, bass and other on new tracks")
+        .clicked()
+    {
+        if !in_selection {
+            let _ = app.run("edit.select", json!({"clips": [c.0]}));
+        }
+        app.stem_jobs.dialog.open = true;
+    }
+    if ui
+        .add_enabled(audio, egui::Button::new("Transcribe Lyrics..."))
+        .on_hover_text("Write the lyrics into the Lyrics ruler and mark the chorus")
+        .clicked()
+    {
+        let _ = app.run("edit.select", json!({"clips": [c.0]}));
+        app.stem_jobs.lyrics_dialog.open = true;
+    }
     if ui.button("Rename...").clicked() {
         let name = app.engine.session().find_clip(c).map(|(_, x)| x.name.clone()).unwrap_or_default();
         app.dialogs.open_rename_clip(c, &name);

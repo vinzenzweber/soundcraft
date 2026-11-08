@@ -55,7 +55,7 @@ const SENDS: [&str; 10] = [
 ];
 
 /// Every ruler id, in display order (the first ten are also served by `view.ruler`).
-pub const RULERS: [&str; 15] = [
+pub const RULERS: [&str; 16] = [
     "bars_beats",
     "min_secs",
     "timecode",
@@ -71,6 +71,7 @@ pub const RULERS: [&str; 15] = [
     "markers3",
     "markers4",
     "markers5",
+    "lyrics",
 ];
 const MARKER_RULERS: [&str; 5] = ["markers", "markers2", "markers3", "markers4", "markers5"];
 
@@ -93,6 +94,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "view.edit_all", "All", ["View", "Edit Window Views"], None, "{} — shows every Edit window column", always, |e, _| Ok(set_flags(e, &EDIT_VIEWS, true))),
         cmd!(noundo "view.edit_minimal", "Minimal", ["View", "Edit Window Views"], None, "{} — hides every optional Edit window column", always, |e, _| Ok(set_flags(e, &EDIT_VIEWS, false))),
         // Rulers.
+        cmd!(noundo "view.ruler_lyrics", "Lyrics", ["View", "Rulers"], None, "{visible?: bool} — the Lyrics ruler (lyrics.transcribe fills it)", always, |e, p| toggle_ruler(e, p, "lyrics")),
         cmd!(noundo "view.ruler_timecode2", "Timecode 2", ["View", "Rulers"], None, "{visible?: bool}", always, |e, p| toggle_ruler(e, p, "timecode2")),
         cmd!(noundo "view.ruler_markers2", "Markers 2", ["View", "Rulers"], None, "{visible?: bool}", always, |e, p| toggle_ruler(e, p, "markers2")),
         cmd!(noundo "view.ruler_markers3", "Markers 3", ["View", "Rulers"], None, "{visible?: bool}", always, |e, p| toggle_ruler(e, p, "markers3")),
@@ -195,7 +197,7 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-fn sort_rulers(r: &mut Vec<String>) {
+pub(super) fn sort_rulers(r: &mut Vec<String>) {
     r.sort_by_key(|x| RULERS.iter().position(|a| a == x).unwrap_or(usize::MAX));
     r.dedup();
 }

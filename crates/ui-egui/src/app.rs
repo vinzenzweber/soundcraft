@@ -118,6 +118,7 @@ impl SoundApp {
             video: video_track::VideoPool::default(),
             bounce: None,
             imports: import::Imports::default(),
+            stem_jobs: crate::stems::StemJobs::default(),
             #[cfg(test)]
             _palette_lock: theme::lock_test_palette(),
             #[cfg(test)]
@@ -180,6 +181,7 @@ impl SoundApp {
         if ctx.current_pass_index() == 0 {
             bounce::step(self, ctx);
             import::step(self, ctx);
+            crate::stems::step(self, ctx);
             updates_ui::tick(self, ctx);
         }
         if !self.pointer_down {

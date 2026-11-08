@@ -73,6 +73,15 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("view.scroll_into_view", "Scroll Into View", "", None),
     ("ui.new_tracks_dialog", "New Tracks…", "", None),
     ("ui.bounce_dialog", "Bounce Mix…", "", None),
+    ("ui.stem_separation_dialog", "Stem Separation…", "AudioSuite > Stem Separation...", None),
+    ("ui.lyrics_dialog", "Transcribe Lyrics…", "AudioSuite > Transcribe Lyrics...", None),
+    ("lyrics.start", "Start Lyrics Transcription", "", None),
+    ("lyrics.download_model", "Download Lyrics Model", "", None),
+    ("stems.start", "Start Stem Separation", "", None),
+    ("stems.download_model", "Download Stem Separation Model", "", None),
+    ("jobs.list", "Background Jobs", "", None),
+    ("jobs.status", "Background Job Status", "", None),
+    ("jobs.cancel", "Cancel Background Job", "", None),
     ("ui.set", "Set UI State", "", None),
     ("ui.theme", "Appearance", "", None),
     ("ui.reduce_visual_effects", "Reduce Visual Effects", "", None),
@@ -216,6 +225,13 @@ pub fn tree() -> Vec<MenuNode> {
     // Not in the incumbent catalog, but the only UI path to an empty MIDI clip (#282).
     // It creates a clip rather than acting on the selected ones, so it leads the Clip menu.
     insert_path(&mut roots, "Clip > New MIDI Clip");
+    // SoundCraft's own: stem separation leads the AudioSuite menu.
+    insert_path(&mut roots, "AudioSuite > Stem Separation...");
+    insert_path(&mut roots, "AudioSuite > Transcribe Lyrics...");
+    if let Some(suite) = roots.iter_mut().find(|n| n.label == "AudioSuite") {
+        suite.children.rotate_right(2);
+    }
+    insert_path(&mut roots, "View > Rulers > Lyrics");
     if let Some(clip) = roots.iter_mut().find(|n| n.label == "Clip") {
         clip.children.rotate_right(1);
     }
@@ -354,6 +370,8 @@ pub fn item_state(app: &SoundApp, path: &str, id: Option<&str>) -> (bool, bool) 
     } else {
         match id {
             Some("setup.preferences") => preferences_menu_enabled(app),
+            Some("ui.stem_separation_dialog") => soundcraft_engine::find_command("stems.separate").is_some_and(|c| (c.enabled)(&app.engine).is_ok()),
+            Some("ui.lyrics_dialog") => soundcraft_engine::find_command("lyrics.transcribe").is_some_and(|c| (c.enabled)(&app.engine).is_ok()),
             Some(i)
                 if i.starts_with("window.")
                     || i.starts_with("view.mix_section")
@@ -518,6 +536,14 @@ pub fn invoke_menu(app: &mut SoundApp, id: &str, path: &str) {
     }
     if id == "ui.bounce_dialog" {
         let _ = app.dialogs.open_for_command(&app.engine, "file.bounce_mix");
+        return;
+    }
+    if id == "ui.stem_separation_dialog" {
+        app.stem_jobs.dialog.open = true;
+        return;
+    }
+    if id == "ui.lyrics_dialog" {
+        app.stem_jobs.lyrics_dialog.open = true;
         return;
     }
     let params = params_for(path, id);
@@ -723,6 +749,17 @@ pub fn run_ui_command(app: &mut SoundApp, id: &str, p: &Value) -> Option<Result<
         "ui.bounce_dialog" => {
             return Some(Err("ui.bounce_dialog opens a dialog from the menu only; call file.bounce_mix with a path".into()));
         }
+        "ui.stem_separation_dialog" => {
+            return Some(Err("ui.stem_separation_dialog opens a window from the menu only; call stems.start (background) or stems.separate".into()));
+        }
+        "ui.lyrics_dialog" => {
+            return Some(Err("ui.lyrics_dialog opens a window from the menu only; call lyrics.start (background) or lyrics.transcribe".into()));
+        }
+        "lyrics.start" => return Some(crate::stems::start_lyrics(app, p)),
+        "lyrics.download_model" => return Some(crate::stems::start_install_speech(app, p)),
+        "stems.start" => return Some(crate::stems::start(app, p)),
+        "stems.download_model" => return Some(crate::stems::start_install(app, p)),
+        "jobs.list" | "jobs.status" | "jobs.cancel" => return Some(crate::stems::command(app, id, p)),
         "ui.theme" => {
             let Some(mode) = p.get("mode").and_then(Value::as_str) else {
                 return Some(Ok(json!({"mode": app.ui.theme.id()})));

@@ -209,6 +209,12 @@ pub struct Engine {
     pub last_selection: Option<(soundcraft_time::Range, Vec<TrackId>)>,
     /// Audio decoded off the UI thread, waiting for its `file.import_audio` (see `offer_import`).
     imports: Vec<io::DecodedImport>,
+    /// Where stem separation models are downloaded (the app's settings folder); see `cmd::models_dir`.
+    pub models_dir: Option<std::path::PathBuf>,
+    /// A separation finished off the UI thread, waiting for its `stems.separate` (see `offer_stems`).
+    stems_offer: Option<cmd::StemsDone>,
+    /// A transcription finished off the UI thread, waiting for its `lyrics.transcribe`.
+    lyrics_offer: Option<cmd::LyricsDone>,
 }
 
 impl Default for Engine {
@@ -240,6 +246,9 @@ impl Engine {
             messages: Vec::new(),
             last_selection: None,
             imports: Vec::new(),
+            models_dir: None,
+            stems_offer: None,
+            lyrics_offer: None,
         }
     }
 

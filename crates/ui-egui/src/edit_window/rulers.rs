@@ -24,13 +24,120 @@ fn ruler_label(id: &str) -> &'static str {
         "markers3" => "Markers 3",
         "markers4" => "Markers 4",
         "markers5" => "Markers 5",
+        "lyrics" => "Lyrics",
         "tempo_editor" => "",
         _ => "",
     }
 }
 
 pub fn ruler_height(id: &str) -> f32 {
-    if id == "tempo_editor" { 56.0 } else { RULER_H }
+    match id {
+        "tempo_editor" => 56.0,
+        "lyrics" => RULER_H + 8.0,
+        _ => RULER_H,
+    }
+}
+
+/// Chorus lines further apart than this are separate choruses (as in `lyrics.inspect`).
+const CHORUS_GAP_SECS: f64 = 2.0;
+
+/// The Lyrics ruler: each line as a block at its time, the chorus in orange while highlighted.
+/// Hover shows the whole line, a click selects its time on every audio track, and the context
+/// menu selects a chorus, toggles the highlight or clears the lyrics.
+fn lyrics_ruler(app: &mut SoundApp, ui: &mut Ui, painter: &egui::Painter, s: &Session, tl: Rect, row: Rect) {
+    let t = Tokens::current();
+    painter.rect_filled(row, 0.0, Color32::from_rgb(34, 31, 44));
+    let ly = &s.lyrics;
+    if ly.is_empty() {
+        painter.text(
+            pos2(tl.min.x + 6.0, row.center().y),
+            Align2::LEFT_CENTER,
+            "No lyrics yet: right-click a clip › Transcribe Lyrics…",
+            regular(11.0),
+            t.text_dim,
+        );
+    }
+    let chorus_fill = Color32::from_rgb(222, 128, 38);
+    let line_fill = Color32::from_rgb(62, 58, 78);
+    let mut hovered = None;
+    let pointer = ui.ctx().pointer_hover_pos();
+    for (i, l) in ly.lines.iter().enumerate() {
+        let x0 = x_of(s, tl, l.start);
+        let x1 = x_of(s, tl, l.end).max(x0 + 3.0);
+        if x1 < tl.min.x || x0 > tl.max.x {
+            continue;
+        }
+        let r = Rect::from_min_max(pos2(x0 + 1.0, row.min.y + 3.0), pos2(x1 - 1.0, row.max.y - 3.0));
+        let chorus = l.chorus && ly.highlight_chorus;
+        painter.rect_filled(r, 3.0, if chorus { chorus_fill } else { line_fill });
+        if r.width() > 14.0 {
+            painter.with_clip_rect(r.shrink2(vec2(3.0, 0.0)).intersect(row)).text(
+                pos2(r.min.x + 4.0, r.center().y),
+                Align2::LEFT_CENTER,
+                &l.text,
+                if chorus { bold(11.0) } else { regular(11.0) },
+                if chorus { Color32::from_rgb(28, 18, 8) } else { Color32::from_rgb(226, 222, 236) },
+            );
+        }
+        if pointer.is_some_and(|p| r.contains(p)) {
+            hovered = Some(i);
+        }
+    }
+    let resp = ui.interact(row, ui.scope_id().with("lyrics_ruler"), Sense::click());
+    let resp = match hovered.and_then(|i| ly.lines.get(i)) {
+        Some(l) => resp.on_hover_text(if l.chorus { format!("{}  (chorus)", l.text) } else { l.text.clone() }),
+        None => resp,
+    };
+    let audio_tracks: Vec<u64> = s.tracks.iter().filter(|t| t.kind == soundcraft_model::TrackKind::Audio).map(|t| t.id.0).collect();
+    if resp.clicked()
+        && let Some(l) = hovered.and_then(|i| ly.lines.get(i))
+    {
+        let _ = app.run("edit.select", json!({"tracks": audio_tracks, "start": l.start, "end": l.end}));
+    }
+    let gap = (CHORUS_GAP_SECS * s.sample_rate.as_f64()) as Samples;
+    let choruses = ly.chorus_ranges(gap);
+    let highlight = ly.highlight_chorus;
+    let has = !ly.is_empty();
+    let rate = s.sample_rate.as_f64();
+    resp.context_menu(|ui| {
+        let mut h = highlight;
+        if ui.add_enabled(has, egui::Checkbox::new(&mut h, "Highlight Chorus")).changed() {
+            let _ = app.run("lyrics.highlight_chorus", json!({"value": h}));
+            ui.close();
+        }
+        if !choruses.is_empty() {
+            ui.separator();
+        }
+        for (i, (a, b)) in choruses.iter().enumerate() {
+            let at = *a as f64 / rate;
+            let label = format!("Chorus {} ({}:{:02}, {:.0} s)", i + 1, (at / 60.0) as i64, (at % 60.0) as i64, (b - a) as f64 / rate);
+            ui.menu_button(label, |ui| {
+                if ui.button("Select on All Audio Tracks").clicked() {
+                    let _ = app.run("lyrics.select_chorus", json!({"index": i}));
+                    ui.close();
+                }
+                // After pasting the chorus somewhere, its words follow it there.
+                if ui
+                    .button("Copy Lyrics to Insertion Point")
+                    .on_hover_text("Puts this chorus's lines at the edit insertion, e.g. on a chorus pasted as an intro")
+                    .clicked()
+                {
+                    let to = app.engine.session().edit.selection.start;
+                    let _ = app.run("lyrics.copy", json!({"start": a, "end": b, "to": to}));
+                    ui.close();
+                }
+            });
+        }
+        ui.separator();
+        if ui.add_enabled(has, egui::Button::new("Clear Lyrics")).clicked() {
+            let _ = app.run("lyrics.clear", json!({}));
+            ui.close();
+        }
+        if ui.button("Hide Lyrics Ruler").clicked() {
+            let _ = app.run("view.ruler_lyrics", json!({"visible": false}));
+            ui.close();
+        }
+    });
 }
 
 /// The tempo editor: a graph of tempo over time. Click adds a change, Alt-click removes the nearest.
@@ -147,6 +254,9 @@ pub(super) fn draw_rulers(app: &mut SoundApp, ui: &mut Ui, area: Rect, tl: Rect,
             }
             "tempo_editor" => {
                 tempo_editor(app, ui, &painter, &s, tl, row);
+            }
+            "lyrics" => {
+                lyrics_ruler(app, ui, &painter, &s, tl, row);
             }
             "key" => {
                 painter.rect_filled(row, 0.0, Color32::from_rgb(64, 52, 88));

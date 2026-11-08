@@ -541,7 +541,7 @@ fn unique_folder_bus_name(s: &Session, base: &str, own: Option<soundcraft_model:
     format!("{base} {}", s.busses.len().saturating_add(3))
 }
 
-fn move_to_folder(e: &mut Engine, p: &Value) -> Result<Value> {
+pub(super) fn move_to_folder(e: &mut Engine, p: &Value) -> Result<Value> {
     let tracks = tracks_required(e, "track.move_to_new_folder", p)?;
     let name = str_param(p, "name").map(str::to_string);
     let s = e.session_mut();

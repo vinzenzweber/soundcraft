@@ -1,0 +1,32 @@
+[package]
+name = "soundcraft-stems"
+description = "SoundCraft stem separation: splits audio into vocals, drums, bass and other with a local HTDemucs model on the GPU"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+log.workspace = true
+
+# The model runs natively only: the web build reports "unsupported".
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# HTDemucs v4 in pure Rust on Burn (Apache-2.0). Pinned: the weights layout must match the loader.
+demucs-core = { git = "https://github.com/nikhilunni/demucs-rs", rev = "805d6f72ede20282832ac78c634e8767716c0b21", features = ["wgpu", "autotune", "fusion"] }
+burn = { version = "0.20.1", default-features = false, features = ["std", "wgpu", "autotune", "fusion"] }
+pollster = "0.4"
+# GPU kernel-tuning cache location (Burn's compute runtime).
+cubecl = { version = "0.9", default-features = false }
+# Model download (same versions the app already ships for update checks).
+ureq = "3"
+sha2 = "0.10"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+burn = { version = "0.20.1", default-features = false, features = ["metal"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

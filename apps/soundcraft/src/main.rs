@@ -257,6 +257,7 @@ fn main() -> eframe::Result {
             app.autosave_dir = env.config_dir.as_ref().map(|d| d.join("Autosave"));
             app.leftovers = app.autosave_dir.as_deref().map(soundcraft_engine::autosave::leftovers).unwrap_or_default();
             app.preset_dir = env.config_dir.as_ref().map(|d| d.join("Presets"));
+            app.engine.models_dir = env.config_dir.as_ref().map(|d| d.join("Models"));
             app.extra.ui_scale = prefs.ui_scale;
             app.ui = prefs;
             if let Some(port) = control_port {

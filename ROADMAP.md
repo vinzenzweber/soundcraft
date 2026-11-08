@@ -122,6 +122,8 @@ mutated and truncated movies. Field reports from the first public week are track
 
 ## Progress log
 
+- **2026-11-08:** AudioSuite › Transcribe Lyrics… (also on the clip's right-click menu) writes a clip's lyrics into a new Lyrics ruler with NVIDIA Parakeet v3 running locally on the GPU, separating the vocal first, and marks the chorus in orange: the most-repeated block of lines, extended to every place where its vocal melody returns. Lyrics are saved with the session and move with Insert and Cut Time. The ruler's right-click menu selects a chorus on every audio track or copies its lines elsewhere, and `lyrics.*` commands do the same from scripts, enough to put the chorus in front of a song as an intro ([lyrics.md](docs/lyrics.md)).
+- **2026-11-08:** AudioSuite › Stem Separation… (also on the clip's right-click menu) splits the selected clips into vocals, drums, bass and other, or six stems with guitar and piano, with HTDemucs v4 running locally on the GPU. The stems land on colour-coded tracks in a routing folder under the clip's track, aligned with the clip, as one undo step; an Instrumental option adds the clip minus its vocals, which adds back to the clip exactly. The model downloads on first use and is checked against its SHA-256. A progress card with Cancel keeps the app usable, and `stems.start` with `jobs.status`/`jobs.cancel` runs the same work as a background job from scripts ([stem-separation.md](docs/stem-separation.md)).
 - **2026-10-25:** Alt+Shift+E (`view.zoom_toggle_cancel`) and an Alt-click on the Zoom Toggle button cancel Zoom Toggle and keep the current view: the zoom, the scroll and the track heights stay as they are, and the button is no longer lit. The next Zoom Toggle zooms in from that view and goes back to it. No readiness percentage change.
 - **2026-10-25:** Tracks and Groups and the Clip List sit in dock columns that run the Edit window's full height at its left and right edges, with the MIDI Editor under the session view between them; Mix docks Tracks and Groups at its left edge. A panel dragged onto a dock group joins it as a tab, stacks above or below it, or makes a new column; one dragged to an empty window edge makes a dock there. A list with no saved place reopens in its dock, and makes the dock again when it is gone. Preferences and window configurations saved with the earlier split-frame layouts load with the new default layouts and keep their other settings. No readiness percentage change.
 - **2026-10-25:** Auto Pan moves the balance of a stereo track: the left channel's level falls as the position moves right and the right channel's as it moves left, at constant power, and each channel stays on its own side. At the center the track passes unchanged, so a wide or out-of-phase stereo image keeps its width, and the envelope follower follows the louder channel. No readiness percentage change.
@@ -177,6 +179,8 @@ mutated and truncated movies. Field reports from the first public week are track
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-08 | trivial | Progress log: Lyrics and chorus; readiness estimates unchanged |
+| 2026-11-08 | trivial | Progress log: Stem Separation; readiness estimates unchanged |
 | 2026-10-25 | trivial | Progress log: Cancel Zoom Toggle; readiness estimates unchanged |
 | 2026-10-25 | trivial | Progress log: side panels in dock columns; readiness estimates unchanged |
 | 2026-10-25 | trivial | Progress log: Auto Pan stereo balance; readiness estimates unchanged |

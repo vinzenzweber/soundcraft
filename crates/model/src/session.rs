@@ -356,6 +356,9 @@ pub struct Session {
     pub tempo: TempoMap,
     #[serde(default)]
     pub key_signatures: Vec<(Samples, String)>,
+    /// Lyrics transcribed from a vocal, shown in the Lyrics ruler.
+    #[serde(default, skip_serializing_if = "crate::Lyrics::is_empty")]
+    pub lyrics: crate::Lyrics,
     pub tracks: Vec<Track>,
     pub sources: Vec<Source>,
     /// Movies referenced by Video track clips.
@@ -403,6 +406,7 @@ impl Session {
             timecode_start: 0,
             tempo: TempoMap::default(),
             key_signatures: Vec::new(),
+            lyrics: crate::Lyrics::default(),
             tracks: Vec::new(),
             sources: Vec::new(),
             videos: Vec::new(),
@@ -811,6 +815,7 @@ impl Session {
             bound(at);
             truncate_chars(key, MAX_NAME_CHARS);
         }
+        self.lyrics.sanitize(bound);
         self.midi_originals.values_mut().for_each(bound_sequence);
         let e = &mut self.edit;
         for at in [

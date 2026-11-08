@@ -174,6 +174,7 @@ fn insert_time(e: &mut Engine, p: &Value) -> Result<Value> {
             *at = at.saturating_add(r.len());
         }
     }
+    s.lyrics.shift_from(r.start, r.len());
     Ok(json!({"inserted": r.len()}))
 }
 
@@ -211,6 +212,8 @@ fn cut_time(e: &mut Engine, p: &Value) -> Result<Value> {
             *at -= r.len();
         }
     }
+    s.lyrics.lines.retain(|l| !r.contains(l.start));
+    s.lyrics.shift_from(r.end, -r.len());
     Ok(json!({"removed": r.len()}))
 }
 

@@ -29,6 +29,7 @@ pub mod palette;
 pub mod panels;
 pub mod preferences;
 pub mod shortcuts;
+pub mod stems;
 pub mod theme;
 pub mod toolbar;
 pub mod updates_ui;
@@ -429,6 +430,8 @@ pub struct SoundApp {
     pub bounce: Option<soundcraft_engine::io::Bounce>,
     /// Audio files importing in the background (issue #597).
     pub imports: import::Imports,
+    /// Stem separations and model downloads, with the Stem Separation window's choices.
+    pub stem_jobs: stems::StemJobs,
     /// Test-only: owns the process-wide palette lock while this app exists, so frames painted
     /// and colour assertions in one test can never straddle another test's palette change.
     #[cfg(test)]

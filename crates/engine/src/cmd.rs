@@ -20,6 +20,7 @@ mod event_more;
 mod file;
 mod health;
 mod instrument;
+mod lyrics;
 mod midi;
 mod mix;
 mod more_util;
@@ -28,6 +29,7 @@ mod plugin_state;
 mod query;
 pub(crate) mod sampler;
 mod setup_more;
+mod stems;
 mod strip_silence;
 mod surround;
 mod tab;
@@ -36,7 +38,7 @@ mod track_more;
 mod transport;
 mod video;
 mod view;
-mod view_more;
+pub(crate) mod view_more;
 mod vst3;
 mod zoom_toggle;
 
@@ -64,6 +66,8 @@ mod panic_probe {
 pub use file::bounce_job;
 
 pub(crate) use edit::remember_selection;
+pub use lyrics::{LyricsDone, LyricsJob, lyrics_job};
+pub use stems::{StemsDone, StemsJob, models_dir, stems_job};
 pub use strip_silence::strip_silence_scan;
 
 pub type Run = fn(&mut Engine, &Value) -> Result<Value>;
@@ -162,6 +166,8 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(video::specs());
         v.extend(zoom_toggle::specs());
         v.extend(strip_silence::specs());
+        v.extend(stems::specs());
+        v.extend(lyrics::specs());
         #[cfg(test)]
         v.extend(panic_probe::specs());
         v

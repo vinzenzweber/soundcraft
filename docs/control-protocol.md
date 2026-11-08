@@ -95,6 +95,18 @@ System to Dark, or on Linux to the desktop's portal setting when one is availabl
 track) brings the track to the top of the Edit window and the left of the Mix window, the same as
 Scroll Into View in the track name menu. A window not on screen catches up when it is next shown.
 
+## Background jobs
+
+Slow work runs as a background job so the window keeps drawing. Stem separation is the first
+user: `stems.start` takes the `stems.separate` params (plus `download?: bool`) and returns
+`{job, waits_for}` at once. `jobs.list`, `jobs.status {job}` and `jobs.cancel {job?}` follow and
+stop jobs; a job's `state` is `queued`, `running`, `done`, `failed` or `cancelled`, with
+`progress` (0–1) while it runs and the command's `result` or an `error` when it ends. Jobs run one
+at a time. `stems.separate` itself stays synchronous, as in the headless CLI. See
+[stem-separation.md](stem-separation.md). Lyrics work the same way: `lyrics.start` queues a
+transcription (`lyrics.transcribe` params plus `download?`), and `lyrics.inspect` reads the result;
+see [lyrics.md](lyrics.md).
+
 ## Panel docking
 
 Tracks and Groups, Clips, MIDI Editor, Memory Locations, and Undo History use movable panels. Commands target the active Edit or Mix view; floating panels stay inside the current viewport. Edit and Mix retain separate arrangements; Clips and MIDI Editor belong to Edit. Transport, plug-in, and specialist utility windows retain their existing hosts. The document/session view is protected.

@@ -412,6 +412,9 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
     audiosuite_window(app, ctx);
     crate::bounce::show(app, ctx);
     crate::import::show(app, ctx);
+    crate::stems::dialog(app, ctx);
+    crate::stems::lyrics_dialog(app, ctx);
+    crate::stems::show(app, ctx);
     // Whichever window shows, closing Strip Silence drops its rectangles and stops their scan.
     if !matches!(app.dialogs.open, Some(Dialog::StripSilence { .. } | Dialog::StripSilenceRename { .. })) {
         app.dialogs.strip_rectangles = StripRectangles::default();
