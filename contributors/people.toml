@@ -69,3 +69,7 @@ sync_github_name = true
 [people.kk376]
 real_name = "Kushagra Kumar"
 sync_github_name = true
+
+[people.djmareluki]
+display_name = "DJ Mareluki"
+sync_github_name = false
