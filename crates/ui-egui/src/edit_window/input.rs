@@ -294,7 +294,15 @@ fn start_gesture(app: &mut SoundApp, ui: &mut Ui, c: &LaneCtx<'_>, resp: &egui::
         app.gesture = match eff {
             Tool::Selector | Tool::Smart => Some(Gesture::Select { track: track.id, anchor: snap(s, at_origin), tracks: vec![track.id] }),
             Tool::Grabber => hit.as_ref().map(|c| {
-                let clips = if s.edit.selected_clips.contains(&c.id) { s.edit.selected_clips.clone() } else { vec![c.id] };
+                let clips = if s.edit.selected_clips.contains(&c.id) {
+                    s.edit.selected_clips.clone()
+                } else if clip_in_selection(s, c.id) {
+                    // Grabbing a clip inside a range selection moves every clip that selection holds, so a section
+                    // selected across tracks moves as one.
+                    s.tracks.iter().flat_map(|t| t.clips()).map(|x| x.id).filter(|id| clip_in_selection(s, *id)).collect()
+                } else {
+                    vec![c.id]
+                };
                 Gesture::MoveClips { clips, grab_at: at_origin, delta: 0, from_track: track.id, to_track: track.id }
             }),
             Tool::Trim => hit.as_ref().map(|c| match near_edge(inp, c) {

@@ -1574,3 +1574,23 @@ fn short_track_name_is_centered_and_long_name_is_left_aligned() {
     let first_center_x = first_pos.x + first_size.x * 0.5;
     assert!((first_center_x - (r0.min.x + 64.5)).abs() <= 0.1, "short name should be centered (center was at {first_center_x})");
 }
+
+/// Grabbing a clip inside a range selection moves every clip the selection holds, on every selected track.
+#[test]
+fn grabbing_inside_a_range_selection_moves_all_its_clips() {
+    let mut h = smart_demo();
+    h.state_mut().run("edit.select_all", json!({})).unwrap();
+    h.run_steps(2);
+    let tl = timeline(&h);
+    let (clip, lane) = clip_on_screen(&h, |xs, xe| xe - xs > 120.0 && (xs + xe) / 2.0 > tl.min.x + 60.0 && (xs + xe) / 2.0 < tl.max.x - 60.0);
+    let s = h.state().engine.session();
+    let before: Vec<(soundcraft_model::ClipId, i64)> = s.tracks.iter().flat_map(|t| t.clips()).map(|c| (c.id, c.start)).collect();
+    assert!(before.len() > 1, "the demo has several clips");
+    let grab = pos2((x_of(s, tl, clip.start) + x_of(s, tl, clip.end())) / 2.0, lane.min.y + lane.height() * 0.75);
+    let by = sample_at(s, tl, grab.x + 40.0) - sample_at(s, tl, grab.x);
+    quick_drag(&mut h, grab, grab + vec2(40.0, 0.0));
+    let s = h.state().engine.session();
+    for (id, start) in before {
+        assert_eq!(s.find_clip(id).map(|(_, c)| c.start - start), Some(by), "clip {id:?} moved with the others");
+    }
+}
