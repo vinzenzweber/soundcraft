@@ -71,6 +71,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str, Option<&str>)] = &[
     ("window.shortcuts", "Keyboard Shortcuts", "", None),
     ("view.mix_section", "Mix Window View", "", None),
     ("view.scroll_into_view", "Scroll Into View", "", None),
+    ("view.simple", "Simple View", "View > Simple View", None),
     ("ui.new_tracks_dialog", "New Tracks…", "", None),
     ("ui.bounce_dialog", "Bounce Mix…", "", None),
     ("ui.stem_separation_dialog", "Stem Separation…", "AudioSuite > Stem Separation...", None),
@@ -232,6 +233,11 @@ pub fn tree() -> Vec<MenuNode> {
         suite.children.rotate_right(2);
     }
     insert_path(&mut roots, "View > Rulers > Lyrics");
+    // SoundCraft's own: one switch to a plainer Edit window, first in the View menu.
+    insert_path(&mut roots, "View > Simple View");
+    if let Some(view) = roots.iter_mut().find(|n| n.label == "View") {
+        view.children.rotate_right(1);
+    }
     if let Some(clip) = roots.iter_mut().find(|n| n.label == "Clip") {
         clip.children.rotate_right(1);
     }
@@ -375,7 +381,7 @@ pub fn item_state(app: &SoundApp, path: &str, id: Option<&str>) -> (bool, bool) 
             Some(i)
                 if i.starts_with("window.")
                     || i.starts_with("view.mix_section")
-                    || matches!(i, "audiosuite.process" | "ui.dock" | "ui.dock.reset") =>
+                    || matches!(i, "audiosuite.process" | "ui.dock" | "ui.dock.reset" | "view.simple") =>
             {
                 true
             }
@@ -415,6 +421,7 @@ fn checked_state(app: &SoundApp, path: &str, id: Option<&str>) -> bool {
         Some("window.track_list") => app.ui.show_tracks_list,
         Some("window.clip_list_view") | Some("window.clip_list") => app.ui.show_clip_list,
         Some("window.narrow_mix") => app.ui.narrow_mix,
+        Some("view.simple") => app.ui.simple_view.is_some(),
         Some("window.renderer") => app.extra.show_renderer,
         Some("window.ui_customization") => app.extra.show_ui_customization,
         Some("window.config_auto_update") => app.extra.auto_update_config,
@@ -571,6 +578,9 @@ pub fn run_ui_command(app: &mut SoundApp, id: &str, p: &Value) -> Option<Result<
     }
     if id == "ui.audio_device" {
         return Some(crate::windows::audio_device_command(app, p));
+    }
+    if id == "view.simple" {
+        return Some(crate::simple_view::toggle(app, p));
     }
     // Menu clicks never get here: Setup › Playback Engine / Hardware open the window
     // (`MENU_WINDOWS`). A programmatic call applies the open device instead.

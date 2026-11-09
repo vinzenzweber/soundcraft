@@ -29,6 +29,7 @@ pub mod palette;
 pub mod panels;
 pub mod preferences;
 pub mod shortcuts;
+pub mod simple_view;
 pub mod stems;
 pub mod theme;
 pub mod toolbar;
@@ -103,6 +104,9 @@ pub struct UiState {
     /// The send in the Send window (track, slot).
     #[serde(skip)]
     pub send_window: Option<(TrackId, usize)>,
+    /// View › Simple View is on: what it changed, to put back.
+    #[serde(skip)]
+    pub simple_view: Option<simple_view::Saved>,
     pub audiosuite: Option<String>,
     pub status: String,
     pub show_automation: bool,
@@ -178,6 +182,7 @@ impl Default for UiState {
             track_tint: 0.5,
             plugin_windows: Vec::new(),
             send_window: None,
+            simple_view: None,
             audiosuite: None,
             status: String::new(),
             show_automation: false,
