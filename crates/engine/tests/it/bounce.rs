@@ -71,7 +71,8 @@ fn bounces_write_exactly_the_mix_and_report_its_levels() {
     let dir = scratch("bounce-exact");
     let path = dir.join("Mix.wav");
     let r = Range::new(s.sample_rate.samples(10.0) + 7, s.sample_rate.samples(13.0));
-    let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Float32, dither: false, bwf: None, bitrate_kbps: None };
+    let opts =
+        EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Float32, dither: false, bwf: None, bitrate_kbps: None, ..Default::default() };
     let verb = s.bus_by_name("Verb").unwrap().id;
     for bus in [None, Some(verb)] {
         let mut mix = match bus {
@@ -113,7 +114,8 @@ fn a_bounce_too_big_for_its_format_fails_and_keeps_the_old_file() {
     let dir = scratch("bounce-too-big");
     let path = dir.join("Mix.aif");
     std::fs::write(&path, b"old").unwrap();
-    let opts = EncodeOptions { format: FileFormat::Aiff, bit_depth: BitDepth::Float32, dither: false, bwf: None, bitrate_kbps: None };
+    let opts =
+        EncodeOptions { format: FileFormat::Aiff, bit_depth: BitDepth::Float32, dither: false, bwf: None, bitrate_kbps: None, ..Default::default() };
     let err = Bounce::new(e.session_arc(), &path, Range::new(0, s.sample_rate.samples(3.9 * 3600.0)), &opts, None, false, false).err().unwrap();
     assert!(err.to_string().contains("4 GiB"), "{err}");
     assert_eq!(std::fs::read(&path).unwrap(), b"old");
@@ -192,4 +194,35 @@ fn demo_bounce_levels_are_pinned() {
     for (g, pin) in got.iter().zip(PINNED) {
         assert!(g.iter().zip(pin).all(|(v, p)| (v - f32::from_bits(p)).abs() < 1e-3), "{got:?}");
     }
+}
+
+/// An MP3 bounce of a 48 kHz session can be written at 44.1 kHz, and carries the title, artist and
+/// BPM in an ID3v2.3 tag that leaves the gapless timing intact.
+#[test]
+fn mp3_bounces_take_a_sample_rate_and_id3_tags() {
+    let mut e = soundcraft_engine::demo::demo_engine();
+    assert_eq!(e.session().sample_rate.hz(), 48_000);
+    let dir = scratch("bounce-mp3-tags");
+    let path = dir.join("Intro.mp3");
+    let end = e.session().sample_rate.samples(2.0);
+    let params = serde_json::json!({
+        "path": path, "format": "mp3", "sample_rate": 44_100, "start": 0, "end": end,
+        "title": "Traag Intro", "artist": "DJ Mareluki", "bpm": 98,
+    });
+    e.execute("file.bounce_mix", &params).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(&bytes[..4], b"ID3\x03");
+    for text in [&b"Traag Intro"[..], b"DJ Mareluki", b"98"] {
+        assert!(bytes.windows(text.len()).any(|w| w == text), "{:?} is tagged", String::from_utf8_lossy(text));
+    }
+    let (info, audio) = soundcraft_audio_io::decode(&bytes, Some("mp3")).unwrap();
+    assert_eq!((info.sample_rate, audio.sample_rate), (44_100, 44_100));
+    assert_eq!(audio.frames(), 88_200, "two seconds at 44.1 kHz: the tag kept the gapless length");
+
+    for bad in [serde_json::json!({"sample_rate": 22_050}), serde_json::json!({"bpm": 0}), serde_json::json!({"bpm": "fast"})] {
+        let mut p = params.clone();
+        p.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());
+        assert!(e.execute("file.bounce_mix", &p).is_err(), "{bad} is refused");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

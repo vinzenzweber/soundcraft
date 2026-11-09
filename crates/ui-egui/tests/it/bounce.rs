@@ -168,3 +168,37 @@ fn the_bounce_dialog_dithers_only_when_dither_is_ticked() {
     assert!(dithered > 0.6, "{dithered}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Bouncing over a file that is already there asks first: Bounce becomes Replace, and only that
+/// second press writes over it. An MP3 bounce sends its sample rate and ID3 fields.
+#[test]
+fn bouncing_over_an_existing_file_asks_to_replace_it_first() {
+    let dir = scratch("bounce-replace");
+    let file = dir.join("Intro.mp3");
+    std::fs::write(&file, b"keep me").unwrap();
+    let mut h = harness();
+    let app = h.state_mut();
+    assert!(app.dialogs.open_for_command(&app.engine, "file.bounce_mix"));
+    if let Some(Dialog::Bounce { path, format, title, bpm, .. }) = &mut app.dialogs.open {
+        *path = file.to_string_lossy().into_owned();
+        *format = soundcraft_audio_io::FileFormat::Mp3;
+        *title = "Traag Intro".into();
+        *bpm = "98".into();
+    }
+    h.run_steps(2);
+    h.get_by_label("Bounce").click();
+    h.run_steps(3);
+    assert!(h.state().bounce.is_none(), "nothing starts before the user agrees");
+    assert_eq!(std::fs::read(&file).unwrap(), b"keep me");
+    assert!(h.query_by_label_contains("already exists").is_some());
+    h.get_by_label("Replace").click();
+    h.run_steps(3);
+    assert!(h.state().bounce.is_some(), "{}", h.state().ui.status);
+    h.run();
+    let bytes = std::fs::read(&file).unwrap();
+    assert_eq!(&bytes[..4], b"ID3\x03", "the MP3 carries its tag");
+    assert!(bytes.windows(11).any(|w| w == b"Traag Intro"));
+    let (info, _) = soundcraft_audio_io::decode(&bytes, Some("mp3")).unwrap();
+    assert_eq!(info.sample_rate, 44_100, "the window's default rate");
+    let _ = std::fs::remove_dir_all(&dir);
+}

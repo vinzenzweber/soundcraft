@@ -6,6 +6,7 @@
 
 mod analysis;
 mod huffman;
+mod id3;
 mod quantize;
 mod resample;
 mod tables;
@@ -493,13 +494,21 @@ pub(crate) struct Writer<W> {
 impl<W: Write + Seek> Writer<W> {
     /// Starts a constant-bitrate MP3 of `kbps` (one of [`BITRATES`]; `None` is
     /// [`DEFAULT_KBPS`]). MP3 holds one or two channels.
-    pub(crate) fn new(mut out: W, channels: usize, sample_rate: u32, kbps: Option<u32>) -> Result<Self> {
+    pub(crate) fn new(mut out: W, channels: usize, sample_rate: u32, opts: &crate::EncodeOptions) -> Result<Self> {
         validate_layout(channels, sample_rate)?;
         if channels > 2 {
             return Err(AudioError::Unsupported(format!("MP3 holds mono or stereo, not {channels} channels")));
         }
-        let rate = mp3_rate(sample_rate);
-        let mut enc = Box::new(Encoder::new(channels, rate, kbps.unwrap_or(DEFAULT_KBPS))?);
+        let rate = match opts.mp3_sample_rate {
+            Some(r) if RATES.contains(&r) => r,
+            Some(r) => return Err(AudioError::Unsupported(format!("MP3 holds 32, 44.1 or 48 kHz, not {r} Hz"))),
+            None => mp3_rate(sample_rate),
+        };
+        let mut enc = Box::new(Encoder::new(channels, rate, opts.bitrate_kbps.unwrap_or(DEFAULT_KBPS))?);
+        // The ID3 tag goes first; the `Info` frame, which `finish` rewrites, follows it.
+        if let Some(tags) = &opts.tags {
+            out.write_all(&id3::tag(tags))?;
+        }
         let start = out.stream_position()?;
         out.write_all(&enc.info_frame())?;
         Ok(Writer {
@@ -607,10 +616,10 @@ impl<W: Write + Seek> Writer<W> {
     }
 }
 
-pub(crate) fn encode(buf: &AudioBuffer, kbps: Option<u32>) -> Result<Vec<u8>> {
+pub(crate) fn encode(buf: &AudioBuffer, opts: &crate::EncodeOptions) -> Result<Vec<u8>> {
     crate::pcm::validate_buffer(buf)?;
     let frames = buf.frames();
-    let mut w = Writer::new(Cursor::new(Vec::new()), buf.channels.len(), buf.sample_rate, kbps)?;
+    let mut w = Writer::new(Cursor::new(Vec::new()), buf.channels.len(), buf.sample_rate, opts)?;
     w.write(&buf.channels, frames)?;
     Ok(w.finish()?.into_inner())
 }

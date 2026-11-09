@@ -709,6 +709,7 @@ fn write_session(session: &Session, path: &str, overwrite: bool) -> Result<(Sess
             dither: false,
             bwf: None,
             bitrate_kbps: None,
+            ..Default::default()
         };
         let bytes = soundcraft_audio_io::encode(&audio.buffer, &opts).map_err(|err| EngineError::Io(err.to_string()))?;
         let (name, new) = store_wav(&audio_dir, stem, &bytes)?;

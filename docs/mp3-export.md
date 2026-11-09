@@ -5,6 +5,18 @@ from [PR #607](https://github.com/storytold/soundcraft/pull/607) by Milkshak3s).
 Mix window pick **MP3** as the format; from scripts pass `"format": "mp3"` and, optionally,
 `"bitrate"` (32 to 320 kbps; default 320).
 
+The window also offers:
+
+- **Sample Rate**, 44.1 or 48 kHz (44.1 by default). The session is converted while it is encoded.
+  From scripts: `"sample_rate": 44100` (or 48000, 32000). Without it the session rate is kept, or
+  the nearest rate MP3 holds.
+- **Title**, **Artist** and **BPM**, written as an ID3v2.3 tag at the head of the file (v2.3
+  because older players read it more reliably than v2.4). From scripts: `"title"`, `"artist"`,
+  `"bpm"` (1 to 999). Text beyond Latin-1 is stored as UTF-16. The tag sits before the `Info`
+  frame, so the gapless timing is unchanged.
+- A warning when the file already exists: **Bounce** becomes **Replace**, and only that second
+  press writes over it.
+
 ## What CDJs need, and what SoundCraft writes
 
 | Player | MP3 it plays |
@@ -35,6 +47,6 @@ very sharp hits it leaves about 15 dB more noise in the 10 ms before each hit (p
 LAME. In a full mix this is masked; in a drum-only intro it can be audible. Short-block switching
 is the next step.
 
-Not yet done: ID3 tags (title, artist, BPM, key; see
+Not yet done: the key and comment ID3 fields (see
 [PR #159](https://github.com/storytold/soundcraft/pull/159)), a bitrate picker in the window (the
 command takes any bitrate), and a test on real CDJ hardware.

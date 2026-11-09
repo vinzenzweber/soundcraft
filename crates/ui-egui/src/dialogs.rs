@@ -32,30 +32,111 @@ pub mod spot;
 #[derive(Debug, Clone)]
 pub enum Dialog {
     NewTracks(new_tracks::NewTracks),
-    NewSession { name: String, sample_rate: u32, demo: bool },
-    Bounce { path: String, format: FileFormat, bit_depth: String, normalize: bool, dither: bool },
-    RenameTrack { id: TrackId, name: String },
-    RenameClip { id: ClipId, name: String },
-    RenameMarker { id: soundcraft_model::MarkerId, name: String },
-    ClearClips { clips: Vec<ClipId>, sources: Vec<SourceId>, message: String },
-    PathPrompt { cmd: String, title: String, path: String, key: String },
-    Number { cmd: String, title: String, key: String, value: f64, suffix: String },
-    TempoChange { at: Samples, bpm: f64 }, // from double-clicking the tempo ruler
+    NewSession {
+        name: String,
+        sample_rate: u32,
+        demo: bool,
+    },
+    Bounce {
+        path: String,
+        format: FileFormat,
+        bit_depth: String,
+        normalize: bool,
+        dither: bool,
+        /// MP3 only: 44 100 or 48 000 Hz.
+        mp3_rate: u32,
+        /// MP3 only: the ID3 title, artist and BPM (text, checked by `file.bounce_mix`).
+        title: String,
+        artist: String,
+        bpm: String,
+        /// The file that already exists and that the next Bounce press replaces.
+        replace: Option<String>,
+    },
+    RenameTrack {
+        id: TrackId,
+        name: String,
+    },
+    RenameClip {
+        id: ClipId,
+        name: String,
+    },
+    RenameMarker {
+        id: soundcraft_model::MarkerId,
+        name: String,
+    },
+    ClearClips {
+        clips: Vec<ClipId>,
+        sources: Vec<SourceId>,
+        message: String,
+    },
+    PathPrompt {
+        cmd: String,
+        title: String,
+        path: String,
+        key: String,
+    },
+    Number {
+        cmd: String,
+        title: String,
+        key: String,
+        value: f64,
+        suffix: String,
+    },
+    TempoChange {
+        at: Samples,
+        bpm: f64,
+    }, // from double-clicking the tempo ruler
     Spot(crate::spot::Spot),
-    Fades { shape: String },
-    StripSilence { threshold: f64, min_ms: f64, pre_ms: f64, post_ms: f64 },
+    Fades {
+        shape: String,
+    },
+    StripSilence {
+        threshold: f64,
+        min_ms: f64,
+        pre_ms: f64,
+        post_ms: f64,
+    },
     // Strip Silence › Rename: `strip` holds the Strip Silence values to return to.
-    StripSilenceRename { strip: [f64; 4], names: StripNames },
+    StripSilenceRename {
+        strip: [f64; 4],
+        names: StripNames,
+    },
     // Clip List › Auto Rename: the names that editing gives the clips it separates from `clips`.
-    AutoRename { clips: Vec<ClipId>, names: StripNames },
+    AutoRename {
+        clips: Vec<ClipId>,
+        names: StripNames,
+    },
     // `id: None` creates (Track › Group…); `id: Some` modifies that group (Groups list › Modify Group…).
-    Group { id: Option<GroupId>, name: String, edit: bool, mix: bool, members: Vec<(u64, String, bool)> },
-    Session { frame_rate: String, bit_depth: String },
+    Group {
+        id: Option<GroupId>,
+        name: String,
+        edit: bool,
+        mix: bool,
+        members: Vec<(u64, String, bool)>,
+    },
+    Session {
+        frame_rate: String,
+        bit_depth: String,
+    },
     // Clip › Loop…: `length` is typed in `format`, measured from `start` (the first selected clip's).
     // `filled` is the text the field opened with and the exact length it stands for.
-    Loop { by: LoopBy, count: u32, length: String, format: soundcraft_time::TimeFormat, start: Samples, filled: (String, Samples) },
-    ScoreSetup { title: String, composer: String, bars_per_system: u32, show_track_names: bool },
-    SaveChanges { then: (String, Value) },
+    Loop {
+        by: LoopBy,
+        count: u32,
+        length: String,
+        format: soundcraft_time::TimeFormat,
+        start: Samples,
+        filled: (String, Samples),
+    },
+    ScoreSetup {
+        title: String,
+        composer: String,
+        bars_per_system: u32,
+        show_track_names: bool,
+    },
+    SaveChanges {
+        then: (String, Value),
+    },
 }
 
 /// The Clip Looping dialog's choice of how far a clip is looped.
@@ -185,6 +266,11 @@ impl Dialogs {
                     bit_depth: "24".into(),
                     normalize: false,
                     dither: false,
+                    mp3_rate: 44_100,
+                    title: name.clone(),
+                    artist: String::new(),
+                    bpm: String::new(),
+                    replace: None,
                 }
             }
             "file.import_audio" => Dialog::PathPrompt { cmd: id.into(), title: "Import Audio".into(), path: home, key: "path".into() },
@@ -284,6 +370,96 @@ fn clear_message(s: &Session, clips: &[ClipId], sources: &[SourceId]) -> Option<
         text += if files.len() == 1 { " The file stays on disk." } else { " The files stay on disk." };
     }
     Some(text)
+}
+
+/// The Bounce Mix form; returns the `file.bounce_mix` params when Bounce (or Replace) is pressed.
+fn bounce_form(app: &mut SoundApp, ui: &mut egui::Ui, enter: bool, d: &mut Dialog) -> Option<serde_json::Value> {
+    let Dialog::Bounce { path, format, bit_depth, normalize, dither, mp3_rate, title, artist, bpm, replace } = d else {
+        return None;
+    };
+    bounce_file_row(app, ui, path, format);
+    ui.horizontal(|ui| {
+        craft_ui::ComboBox::from_label("Format").selected_text(format.name()).show_ui(ui, |ui| {
+            for &f in FileFormat::WRITE {
+                ui.selectable_value(format, f, f.name());
+            }
+        });
+        if *format == FileFormat::Mp3 {
+            ui.label("320 kbps CBR").on_hover_text(
+                "Constant 320 kbps with a gapless header: plays on CDJs (2000NXS2, 3000, 3000X) and in DJ software, starting exactly on time.",
+            );
+            craft_ui::ComboBox::from_label("Sample Rate").selected_text(format!("{:.1} kHz", f64::from(*mp3_rate) / 1000.0)).show_ui(ui, |ui| {
+                for r in [44_100u32, 48_000] {
+                    ui.selectable_value(mp3_rate, r, format!("{:.1} kHz", f64::from(r) / 1000.0));
+                }
+            });
+        } else {
+            craft_ui::ComboBox::from_label("Bit Depth").selected_text(format!("{bit_depth}-bit")).show_ui(ui, |ui| {
+                for b in ["16", "24", "32f"] {
+                    ui.selectable_value(bit_depth, b.to_string(), format!("{b}-bit"));
+                }
+            });
+        }
+    });
+    if *format == FileFormat::Mp3 {
+        mp3_tag_fields(ui, title, artist, bpm);
+    }
+    crate::widgets::checkbox(ui, normalize, "Normalize to -0.1 dBFS");
+    // 32-bit float keeps every sample as it is: there is nothing to dither.
+    ui.add_enabled_ui(bit_depth.as_str() != "32f" && *format != FileFormat::Mp3, |ui| {
+        crate::widgets::checkbox(ui, dither, "Dither (TPDF)")
+            .on_hover_text("Adds ±1 LSB triangular dither when writing 16- or 24-bit files. Leave it off when the master chain already dithers.");
+    });
+    ui.label(
+        egui::RichText::new("Bounces the edit selection, or the whole session when nothing is selected.").small().color(Tokens::current().text_dim),
+    );
+    let target = std::path::Path::new(path.as_str()).with_extension(format.default_extension()).to_string_lossy().into_owned();
+    let replacing = replace_warning(ui, replace.as_deref(), &target);
+    if buttons(ui, if replacing { "Replace" } else { "Bounce" }, enter) {
+        if !replacing && std::path::Path::new(&target).exists() {
+            *replace = Some(target);
+        } else {
+            let mut p = json!({"path": target, "format": format.default_extension(), "bit_depth": bit_depth, "normalize": normalize, "dither": *dither && bit_depth.as_str() != "32f"});
+            if *format == FileFormat::Mp3 {
+                add_mp3_params(&mut p, *mp3_rate, title, artist, bpm);
+            }
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// The Bounce form's MP3 tag fields: title, artist and BPM.
+fn mp3_tag_fields(ui: &mut egui::Ui, title: &mut String, artist: &mut String, bpm: &mut String) {
+    for (label, text, width) in [("Title", title, 300.0), ("Artist", artist, 300.0), ("BPM", bpm, 60.0)] {
+        ui.horizontal(|ui| {
+            ui.label(label);
+            crate::widgets::named_text_field(ui.add(egui::TextEdit::singleline(text).desired_width(width)), label);
+        });
+    }
+}
+
+/// When the Bounce press before this one found `target` already there, says so and returns true: the
+/// next press replaces it.
+fn replace_warning(ui: &mut egui::Ui, replace: Option<&str>, target: &str) -> bool {
+    if replace != Some(target) {
+        return false;
+    }
+    let name = std::path::Path::new(target).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    ui.colored_label(Tokens::current().meter_yellow, format!("“{name}” already exists. Press Replace to overwrite it."));
+    true
+}
+
+/// Adds an MP3 bounce's sample rate and ID3 tag to its `file.bounce_mix` params.
+fn add_mp3_params(p: &mut serde_json::Value, rate: u32, title: &str, artist: &str, bpm: &str) {
+    if let Some(o) = p.as_object_mut() {
+        o.insert("sample_rate".into(), json!(rate));
+        o.insert("title".into(), json!(title.trim()));
+        o.insert("artist".into(), json!(artist.trim()));
+        if !bpm.trim().is_empty() {
+            o.insert("bpm".into(), json!(bpm.trim()));
+        }
+    }
 }
 
 /// The Bounce form's file row: a path field and a Browse button that also picks the format.
@@ -488,44 +664,7 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
                         ));
                     }
                 }
-                Dialog::Bounce { path, format, bit_depth, normalize, dither } => {
-                    bounce_file_row(app, ui, path, format);
-                    ui.horizontal(|ui| {
-                        craft_ui::ComboBox::from_label("Format").selected_text(format.name()).show_ui(ui, |ui| {
-                            for &f in FileFormat::WRITE {
-                                ui.selectable_value(format, f, f.name());
-                            }
-                        });
-                        if *format == FileFormat::Mp3 {
-                            ui.label("320 kbps CBR").on_hover_text(
-                                "Constant 320 kbps with a gapless header: plays on CDJs (2000NXS2, 3000, 3000X) and in DJ software, starting exactly on time.",
-                            );
-                        } else {
-                            craft_ui::ComboBox::from_label("Bit Depth").selected_text(format!("{bit_depth}-bit")).show_ui(ui, |ui| {
-                                for b in ["16", "24", "32f"] {
-                                    ui.selectable_value(bit_depth, b.to_string(), format!("{b}-bit"));
-                                }
-                            });
-                        }
-                    });
-                    crate::widgets::checkbox(ui, normalize, "Normalize to -0.1 dBFS");
-                    // 32-bit float keeps every sample as it is: there is nothing to dither.
-                    ui.add_enabled_ui(bit_depth.as_str() != "32f" && *format != FileFormat::Mp3, |ui| {
-                        crate::widgets::checkbox(ui, dither, "Dither (TPDF)")
-                            .on_hover_text("Adds ±1 LSB triangular dither when writing 16- or 24-bit files. Leave it off when the master chain already dithers.");
-                    });
-                    ui.label(
-                        egui::RichText::new("Bounces the edit selection, or the whole session when nothing is selected.")
-                            .small()
-                            .color(Tokens::current().text_dim),
-                    );
-                    if buttons(ui, "Bounce", enter) {
-                        let p = std::path::Path::new(path.as_str()).with_extension(format.default_extension());
-                        bounce_params = Some(
-                            json!({"path": p.to_string_lossy(), "format": format.default_extension(), "bit_depth": bit_depth, "normalize": normalize, "dither": *dither && bit_depth.as_str() != "32f"}),
-                        );
-                    }
-                }
+                d @ Dialog::Bounce { .. } => bounce_params = bounce_form(app, ui, enter, d),
                 Dialog::RenameTrack { id, name } => {
                     name_field(ui, name);
                     if buttons(ui, "OK", enter) {
