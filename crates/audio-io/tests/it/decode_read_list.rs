@@ -10,7 +10,7 @@ fn fixture(name: &str) -> Vec<u8> {
 fn generated(format: FileFormat) -> Vec<u8> {
     let tone: Vec<f32> = (0..800).map(|i| (i as f32 * 0.1).sin() * 0.5).collect();
     let buf = AudioBuffer { sample_rate: 8000, channels: vec![tone] };
-    encode(&buf, &EncodeOptions { format, bit_depth: BitDepth::Int16, dither: false, bwf: None, bitrate_kbps: None }).unwrap()
+    encode(&buf, &EncodeOptions { format, bit_depth: BitDepth::Int16, dither: false, bwf: None, bitrate_kbps: None, ..Default::default() }).unwrap()
 }
 
 fn bytes_for(ext: &str) -> Vec<u8> {
@@ -18,7 +18,14 @@ fn bytes_for(ext: &str) -> Vec<u8> {
         "wav" | "wave" | "bwf" => generated(FileFormat::Wav),
         "rf64" => {
             let tone = AudioBuffer { sample_rate: 8000, channels: vec![vec![0.25; 800]] };
-            let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Int16, dither: false, bwf: None, bitrate_kbps: None };
+            let opts = EncodeOptions {
+                format: FileFormat::Wav,
+                bit_depth: BitDepth::Int16,
+                dither: false,
+                bwf: None,
+                bitrate_kbps: None,
+                ..Default::default()
+            };
             soundcraft_audio_io::encode_wav_rf64(&tone, &opts).unwrap()
         }
         "aif" | "aiff" => generated(FileFormat::Aiff),

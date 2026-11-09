@@ -64,6 +64,7 @@ fn session_bundle_within(session: &Session, limits: BundleLimits) -> Result<(Vec
             dither: false,
             bwf: None,
             bitrate_kbps: None,
+            ..Default::default()
         };
         let bytes = soundcraft_audio_io::encode(&audio.buffer, &opts_wav).map_err(|err| EngineError::Io(err.to_string()))?;
         fits(bytes.len())?;

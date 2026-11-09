@@ -237,6 +237,22 @@ pub struct EncodeOptions {
     /// other formats.
     #[serde(default)]
     pub bitrate_kbps: Option<u32>,
+    /// MP3 sample rate: 32 000, 44 100 or 48 000 Hz, converted from the input rate. `None` keeps the
+    /// input rate, or the nearest rate MP3 holds. Ignored for other formats.
+    #[serde(default)]
+    pub mp3_sample_rate: Option<u32>,
+    /// MP3 title, artist and BPM, written as an ID3v2.3 tag ahead of the audio. Ignored for other
+    /// formats.
+    #[serde(default)]
+    pub tags: Option<Id3Tags>,
+}
+
+/// The ID3 fields an MP3 bounce can carry. Empty text and a missing BPM are left out.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Id3Tags {
+    pub title: String,
+    pub artist: String,
+    pub bpm: Option<u32>,
 }
 
 /// The constant bitrates (kbps) an MP3 can be written at.
@@ -246,7 +262,7 @@ pub const MP3_DEFAULT_KBPS: u32 = mp3::DEFAULT_KBPS;
 
 impl Default for EncodeOptions {
     fn default() -> Self {
-        Self { format: FileFormat::Wav, bit_depth: BitDepth::Int24, dither: false, bwf: None, bitrate_kbps: None }
+        Self { format: FileFormat::Wav, bit_depth: BitDepth::Int24, dither: false, bwf: None, bitrate_kbps: None, mp3_sample_rate: None, tags: None }
     }
 }
 
@@ -366,7 +382,7 @@ pub fn encode(buf: &AudioBuffer, opts: &EncodeOptions) -> Result<Vec<u8>> {
         FileFormat::Wav => wav::encode(buf, opts.bit_depth, opts.dither, opts.bwf.as_ref(), false, None),
         FileFormat::Aiff => aiff::encode(buf, opts.bit_depth, opts.dither),
         FileFormat::Flac => flac::encode(buf, opts.bit_depth, opts.dither),
-        FileFormat::Mp3 => mp3::encode(buf, opts.bitrate_kbps),
+        FileFormat::Mp3 => mp3::encode(buf, opts),
         other => Err(AudioError::Unsupported(format!("encoding {other:?} is not supported"))),
     }
 }
@@ -420,7 +436,7 @@ impl<W: Write + Seek> FileEncoder<W> {
             )?),
             FileFormat::Aiff => Writer::Aiff(aiff::Writer::new(out, channels, sample_rate, depth, dither)?),
             FileFormat::Flac => Writer::Flac(flac::Writer::new(out, channels, sample_rate, depth, dither)?),
-            FileFormat::Mp3 => Writer::Mp3(mp3::Writer::new(out, channels, sample_rate, opts.bitrate_kbps)?),
+            FileFormat::Mp3 => Writer::Mp3(mp3::Writer::new(out, channels, sample_rate, opts)?),
             other => return Err(AudioError::Unsupported(format!("encoding {other:?} is not supported"))),
         }))
     }

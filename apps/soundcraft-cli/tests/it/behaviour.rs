@@ -37,7 +37,8 @@ fn sandbox(tag: &str) -> PathBuf {
     for (i, d) in buf.channels[0].iter_mut().enumerate() {
         *d = i as f32 / 400.0;
     }
-    let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Int16, dither: false, bwf: None, bitrate_kbps: None };
+    let opts =
+        EncodeOptions { format: FileFormat::Wav, bit_depth: BitDepth::Int16, dither: false, bwf: None, bitrate_kbps: None, ..Default::default() };
     std::fs::write(dir.join("in.wav"), soundcraft_audio_io::encode(&buf, &opts).unwrap()).unwrap();
     std::fs::write(dir.join("s.txt"), "track.new {}\n").unwrap();
     dir

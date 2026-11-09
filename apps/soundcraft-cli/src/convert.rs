@@ -37,7 +37,7 @@ pub(crate) fn convert(args: &ConvertArgs, out: &mut dyn Write) -> Result<(), Cli
         b.time_reference = at_rate(b.time_reference, source_rate, buf.sample_rate);
         b
     });
-    let opts = soundcraft_audio_io::EncodeOptions { format, bit_depth, dither, bwf, bitrate_kbps: None };
+    let opts = soundcraft_audio_io::EncodeOptions { format, bit_depth, dither, bwf, bitrate_kbps: None, ..Default::default() };
     let bytes = soundcraft_audio_io::encode(&buf, &opts).map_err(|source| CliError::Audio { path: output.clone(), source })?;
     write_replacing(&args.write_path(), &bytes).map_err(|source| CliError::File { path: output.clone(), source })?;
     outln!(out, "wrote {} ({} ch, {} Hz, {:.2} s)", output.display(), buf.num_channels(), buf.sample_rate, buf.duration_secs());

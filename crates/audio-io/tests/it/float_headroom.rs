@@ -41,7 +41,7 @@ fn assert_float_headroom(streaming: bool) {
                     sample_rate: 48_000,
                     channels: (0..channels).map(|c| samples.iter().copied().cycle().skip(c).take(4103).collect()).collect(),
                 };
-                let options = EncodeOptions { format, bit_depth: BitDepth::Float32, dither, bwf: None, bitrate_kbps: None };
+                let options = EncodeOptions { format, bit_depth: BitDepth::Float32, dither, bwf: None, bitrate_kbps: None, ..Default::default() };
                 let bytes = encoded(&audio, &options, streaming);
                 let pcm: Vec<u8> =
                     audio.interleaved().iter().flat_map(|v| if format == FileFormat::Wav { v.to_le_bytes() } else { v.to_be_bytes() }).collect();
@@ -75,7 +75,7 @@ fn float32_keeps_non_finite_sample_handling() {
     let expected = [0.0_f32, -1.0, 1.0];
     for format in [FileFormat::Wav, FileFormat::Aiff] {
         for streaming in [false, true] {
-            let options = EncodeOptions { format, bit_depth: BitDepth::Float32, dither: false, bwf: None, bitrate_kbps: None };
+            let options = EncodeOptions { format, bit_depth: BitDepth::Float32, dither: false, bwf: None, bitrate_kbps: None, ..Default::default() };
             let bytes = encoded(&audio, &options, streaming);
             // Inspect stored samples too: the decoder itself replaces non-finite values.
             let pcm: Vec<u8> = expected.iter().flat_map(|v| if format == FileFormat::Wav { v.to_le_bytes() } else { v.to_be_bytes() }).collect();
@@ -91,7 +91,7 @@ fn integer_pcm_still_clips_at_full_scale() {
     for (depth, max) in [(BitDepth::Int16, 32767.0 / 32768.0), (BitDepth::Int24, 8_388_607.0 / 8_388_608.0), (BitDepth::Int32, 1.0)] {
         for format in [FileFormat::Wav, FileFormat::Aiff, FileFormat::Flac] {
             for streaming in [false, true] {
-                let options = EncodeOptions { format, bit_depth: depth, dither: false, bwf: None, bitrate_kbps: None };
+                let options = EncodeOptions { format, bit_depth: depth, dither: false, bwf: None, bitrate_kbps: None, ..Default::default() };
                 let bytes = encoded(&audio, &options, streaming);
                 let (_, decoded) = decode(&bytes, None).unwrap();
                 assert_eq!(decoded.channels[0], [-1.0, -1.0, -1.0, -0.5, 0.0, 0.5, max, max, max], "{format:?} {depth:?}, streaming={streaming}");

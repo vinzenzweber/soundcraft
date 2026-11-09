@@ -10,7 +10,7 @@ fn small(format: FileFormat, depth: BitDepth, channels: usize) -> Vec<u8> {
             *s = ((i as f32) * 0.1).sin() * 0.5;
         }
     }
-    encode(&b, &EncodeOptions { format, bit_depth: depth, dither: false, bwf: None, bitrate_kbps: None }).unwrap()
+    encode(&b, &EncodeOptions { format, bit_depth: depth, dither: false, bwf: None, bitrate_kbps: None, ..Default::default() }).unwrap()
 }
 
 /// An ID3v2.4 header whose syncsafe size field declares `size` bytes of tag body.
@@ -482,7 +482,7 @@ fn a_container_selected_without_its_size_check_is_refused() {
 fn zero_frame_flac_after_a_prefix_is_still_empty() {
     let flac = encode(
         &AudioBuffer::new(48_000, 1, 0),
-        &EncodeOptions { format: FileFormat::Flac, bit_depth: BitDepth::Int16, dither: false, bwf: None, bitrate_kbps: None },
+        &EncodeOptions { format: FileFormat::Flac, bit_depth: BitDepth::Int16, dither: false, bwf: None, bitrate_kbps: None, ..Default::default() },
     )
     .unwrap();
     let tag = id3_tag(b"tag");
@@ -515,7 +515,7 @@ fn adts_frame(payload: &[u8]) -> Vec<u8> {
 fn zero_frame_flac_after_a_false_mpeg_sync_is_still_empty() {
     let flac = encode(
         &AudioBuffer::new(48_000, 1, 0),
-        &EncodeOptions { format: FileFormat::Flac, bit_depth: BitDepth::Int16, dither: false, bwf: None, bitrate_kbps: None },
+        &EncodeOptions { format: FileFormat::Flac, bit_depth: BitDepth::Int16, dither: false, bwf: None, bitrate_kbps: None, ..Default::default() },
     )
     .unwrap();
     for junk in [vec![0xFF, 0xE0, 0x00], vec![0xFF, 0xF0, 0x00], vec![0xFF, 0xFB, 0xF0, 0x00]] {
@@ -779,7 +779,7 @@ proptest! {
     fn random_audio_roundtrips_through_flac(samples in proptest::collection::vec(-1.2f32..1.2, 1..3000), channels in 1usize..4) {
         let buf = AudioBuffer::from_interleaved(48_000, channels, &samples);
         prop_assume!(buf.frames() > 0);
-        let opts = EncodeOptions { format: FileFormat::Flac, bit_depth: BitDepth::Int24, dither: false, bwf: None, bitrate_kbps: None };
+        let opts = EncodeOptions { format: FileFormat::Flac, bit_depth: BitDepth::Int24, dither: false, bwf: None, bitrate_kbps: None, ..Default::default() };
         let (_, flac) = decode(&encode(&buf, &opts).unwrap(), None).unwrap();
         let (_, wav) = decode(&encode(&buf, &EncodeOptions { format: FileFormat::Wav, ..opts }).unwrap(), None).unwrap();
         prop_assert_eq!(flac, wav);

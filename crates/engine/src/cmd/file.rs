@@ -89,7 +89,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 crate::io::import_video_bytes(e, &path, bytes, at)
             }
         ),
-        cmd!(noundo "file.bounce_mix", "Bounce Mix...", ["File"], Some("Cmd+Alt+B"), "{path, format?: wav|aiff|flac|mp3, bit_depth?: 16|24|32f, bitrate?: kbps for mp3 (32..320, default 320: constant bitrate, gapless, plays on CDJs), start?, end?, source?: main|bus name, normalize?: false, dither?: true, fold_down?: stereo}", always, bounce),
+        cmd!(noundo "file.bounce_mix", "Bounce Mix...", ["File"], Some("Cmd+Alt+B"), "{path, format?: wav|aiff|flac|mp3, bit_depth?: 16|24|32f, bitrate?: kbps for mp3 (32..320, default 320: constant bitrate, gapless, plays on CDJs), sample_rate?: mp3 only, 44100|48000|32000, title?, artist?, bpm?: mp3 ID3 tag, start?, end?, source?: main|bus name, normalize?: false, dither?: true, fold_down?: stereo}", always, bounce),
         cmd!(noundo "file.bounce_stems", "Bounce Stems...", [], None, "{dir, format?: wav|aiff|flac, bit_depth?: 16|24|32f, start?, end?, dither?: true, fold_down?: stereo}", has_tracks, |e, p| {
             let dir = str_param(p, "dir").ok_or_else(|| bad("file.bounce_stems", "`dir` required"))?.to_string();
             let r = range_param(e, "file.bounce_stems", p)?;
@@ -103,7 +103,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 _ => soundcraft_audio_io::BitDepth::Int24,
             };
             let fold = fold_down_param(p, "file.bounce_stems")?;
-            let files = crate::io::bounce_stems_with(e, &dir, r, &soundcraft_audio_io::EncodeOptions { format, bit_depth, dither: bool_or(p, "dither", true), bwf: None, bitrate_kbps: bitrate_param(p, "file.bounce_stems")? }, fold)?;
+            let files = crate::io::bounce_stems_with(e, &dir, r, &soundcraft_audio_io::EncodeOptions { format, bit_depth, dither: bool_or(p, "dither", true), bwf: None, bitrate_kbps: bitrate_param(p, "file.bounce_stems")?, ..Default::default() }, fold)?;
             Ok(json!({"files": files}))
         }),
         cmd!(noundo "file.export_midi", "MIDI...", ["File", "Export"], None, "{path, tracks?}", always, |e, p| {
@@ -317,6 +317,31 @@ fn bitrate_param(p: &Value, id: &str) -> Result<Option<u32>> {
     }
 }
 
+/// `sample_rate` for an MP3 bounce: 32 000, 44 100 or 48 000 Hz (or kHz: 44.1, 48).
+fn mp3_rate_param(p: &Value, id: &str) -> Result<Option<u32>> {
+    let Some(v) = p.get("sample_rate") else { return Ok(None) };
+    let hz = v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().trim_end_matches("Hz").trim().parse().ok()));
+    let hz = hz.filter(|h| h.is_finite()).map(|h| if h < 1000.0 { h * 1000.0 } else { h });
+    match hz.map(|h| h.round()) {
+        Some(h) if [32_000.0, 44_100.0, 48_000.0].contains(&h) => Ok(Some(h as u32)),
+        _ => Err(bad(id, "`sample_rate` must be 32000, 44100 or 48000 Hz")),
+    }
+}
+
+/// `title`, `artist` and `bpm` for an MP3 bounce's ID3 tag; `None` when none is given.
+fn id3_param(p: &Value, id: &str) -> Result<Option<soundcraft_audio_io::Id3Tags>> {
+    let text = |k: &str| str_param(p, k).map(str::to_string).unwrap_or_default();
+    let bpm = match p.get("bpm") {
+        None | Some(Value::Null) => None,
+        Some(v) => match v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())) {
+            Some(b) if (1.0..=999.0).contains(&b) => Some(b.round() as u32),
+            _ => return Err(bad(id, "`bpm` must be between 1 and 999")),
+        },
+    };
+    let tags = soundcraft_audio_io::Id3Tags { title: text("title"), artist: text("artist"), bpm };
+    Ok((tags != soundcraft_audio_io::Id3Tags::default()).then_some(tags))
+}
+
 /// The bounce `file.bounce_mix` runs for `p`, not rendered yet.
 pub fn bounce_job(e: &Engine, p: &Value) -> Result<crate::io::Bounce> {
     let path = str_param(p, "path").ok_or_else(|| bad("file.bounce_mix", "`path` required"))?.to_string();
@@ -339,6 +364,8 @@ pub fn bounce_job(e: &Engine, p: &Value) -> Result<crate::io::Bounce> {
         dither: bool_or(p, "dither", true),
         bwf: None,
         bitrate_kbps: bitrate_param(p, "file.bounce_mix")?,
+        mp3_sample_rate: mp3_rate_param(p, "file.bounce_mix")?,
+        tags: id3_param(p, "file.bounce_mix")?,
     };
     let normalize = bool_or(p, "normalize", false);
     let fold = fold_down_param(p, "file.bounce_mix")?;
