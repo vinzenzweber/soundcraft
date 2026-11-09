@@ -274,6 +274,8 @@ pub struct Bounce {
     bus: Option<BusId>,
     fold: Option<ChannelFormat>,
     normalize: bool,
+    /// The peak level, in dBFS, `normalize` brings the bounce to.
+    normalize_db: f32,
     /// Measuring the peak to normalize to, the first of two passes.
     measuring: bool,
     render: soundcraft_mix::RangeRender,
@@ -344,6 +346,7 @@ impl Bounce {
             bus,
             fold,
             normalize,
+            normalize_db: -0.1,
             measuring: normalize,
             render,
             block: Vec::new(),
@@ -375,6 +378,13 @@ impl Bounce {
 
     /// Renders blocks until `more` returns false (at least one per call). Returns the finished
     /// bounce once its file is complete.
+    /// Normalizes to `db` dBFS instead of -0.1 (kept between -24 and 0).
+    #[must_use]
+    pub fn normalize_to(mut self, db: f32) -> Self {
+        self.normalize_db = if db.is_finite() { db.clamp(-24.0, 0.0) } else { -0.1 };
+        self
+    }
+
     pub fn step(&mut self, mut more: impl FnMut() -> bool) -> Result<Option<Bounced>> {
         loop {
             match self.render.next_block(&self.session) {
@@ -390,7 +400,7 @@ impl Bounce {
                     }
                 }
                 None if self.measuring => {
-                    self.gain = if self.peak > 0.0 { soundcraft_dsp::db_to_gain(-0.1) / self.peak } else { 1.0 };
+                    self.gain = if self.peak > 0.0 { soundcraft_dsp::db_to_gain(self.normalize_db) / self.peak } else { 1.0 };
                     self.peak = 0.0;
                     self.done = 0;
                     self.measuring = false;

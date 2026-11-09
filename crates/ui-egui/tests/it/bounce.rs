@@ -202,3 +202,44 @@ fn bouncing_over_an_existing_file_asks_to_replace_it_first() {
     assert_eq!(info.sample_rate, 44_100, "the window's default rate");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A bounce that goes over full scale warns in the status line; Normalize to -1 dBFS fixes it.
+#[test]
+fn a_clipping_bounce_warns_and_normalize_brings_it_to_the_chosen_level() {
+    let mut engine = soundcraft_engine::Engine::default();
+    let sr = engine.session().sample_rate.hz();
+    let loud: Vec<f32> = (0..sr as usize).map(|i| 1.5 * (std::f32::consts::TAU * 220.0 * i as f32 / sr as f32).sin()).collect();
+    let audio = soundcraft_audio_io::AudioBuffer { sample_rate: sr, channels: vec![loud.clone(), loud] };
+    let s = engine.session_mut();
+    let track = s.add_track(soundcraft_model::TrackKind::Audio, soundcraft_model::ChannelFormat::Stereo, Some("Loud"));
+    let source = soundcraft_engine::io::add_source(s, "loud", audio, None, soundcraft_audio_io::FileFormat::Wav);
+    let clip = soundcraft_model::Clip::audio(s.new_clip_id(), "loud", source, 0, 0, i64::from(sr));
+    soundcraft_engine::edit::place_clip(s, track, clip);
+    let app = SoundApp::new(engine, None, Services::default());
+    let mut h = Harness::builder().with_size(vec2(1400.0, 900.0)).with_max_steps(1_000).build_ui_state(
+        |ui, app: &mut SoundApp| {
+            app.logic(&ui.ctx().clone());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(5);
+    let dir = scratch("bounce-clipping");
+    for (normalize, file) in [(false, "Loud.wav"), (true, "Fixed.wav")] {
+        let app = h.state_mut();
+        assert!(app.dialogs.open_for_command(&app.engine, "file.bounce_mix"));
+        if let Some(Dialog::Bounce { path, normalize: n, normalize_db, .. }) = &mut app.dialogs.open {
+            *path = dir.join(file).to_string_lossy().into_owned();
+            *n = normalize;
+            assert_eq!(*normalize_db, -1.0, "-1 dBFS is the default level");
+        }
+        h.run_steps(2);
+        h.get_by_label("Bounce").click();
+        h.run();
+        let status = h.state().ui.status.clone();
+        assert_eq!(status.starts_with("Warning: Loud.wav clips"), !normalize, "{status}");
+    }
+    let (_, fixed) = soundcraft_audio_io::decode(&std::fs::read(dir.join("Fixed.wav")).unwrap(), None).unwrap();
+    assert!((soundcraft_dsp::offline::peak_db(&fixed.channels) + 1.0).abs() < 0.01);
+    let _ = std::fs::remove_dir_all(&dir);
+}

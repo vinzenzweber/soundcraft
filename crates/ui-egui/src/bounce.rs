@@ -29,7 +29,12 @@ pub fn step(app: &mut SoundApp, ctx: &egui::Context) {
             return;
         }
         Ok(Some(done)) => {
-            format!("Bounced {} (peak {:.1} dBFS, {:.1} LUFS)", job.path().file_name().unwrap_or_default().to_string_lossy(), done.peak_db, done.lufs)
+            let name = job.path().file_name().unwrap_or_default().to_string_lossy().into_owned();
+            if done.peak_db > 0.0 {
+                format!("Warning: {name} clips: its peak is {:+.1} dBFS, over full scale. Bounce again with Normalize ticked.", done.peak_db)
+            } else {
+                format!("Bounced {name} (peak {:.1} dBFS, {:.1} LUFS)", done.peak_db, done.lufs)
+            }
         }
         Err(e) => e.to_string(),
     };

@@ -89,7 +89,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 crate::io::import_video_bytes(e, &path, bytes, at)
             }
         ),
-        cmd!(noundo "file.bounce_mix", "Bounce Mix...", ["File"], Some("Cmd+Alt+B"), "{path, format?: wav|aiff|flac|mp3, bit_depth?: 16|24|32f, bitrate?: kbps for mp3 (32..320, default 320: constant bitrate, gapless, plays on CDJs), sample_rate?: mp3 only, 44100|48000|32000, title?, artist?, bpm?: mp3 ID3 tag, start?, end?, source?: main|bus name, normalize?: false, dither?: true, fold_down?: stereo}", always, bounce),
+        cmd!(noundo "file.bounce_mix", "Bounce Mix...", ["File"], Some("Cmd+Alt+B"), "{path, format?: wav|aiff|flac|mp3, bit_depth?: 16|24|32f, bitrate?: kbps for mp3 (32..320, default 320: constant bitrate, gapless, plays on CDJs), sample_rate?: mp3 only, 44100|48000|32000, title?, artist?, bpm?: mp3 ID3 tag, start?, end?, source?: main|bus name, normalize?: false, normalize_db?: -0.1 (the peak Normalize brings it to, -24..0), dither?: true, fold_down?: stereo}", always, bounce),
         cmd!(noundo "file.bounce_stems", "Bounce Stems...", [], None, "{dir, format?: wav|aiff|flac, bit_depth?: 16|24|32f, start?, end?, dither?: true, fold_down?: stereo}", has_tracks, |e, p| {
             let dir = str_param(p, "dir").ok_or_else(|| bad("file.bounce_stems", "`dir` required"))?.to_string();
             let r = range_param(e, "file.bounce_stems", p)?;
@@ -303,6 +303,7 @@ fn bounce(e: &mut Engine, p: &Value) -> Result<Value> {
         "peak_db": done.peak_db,
         "lufs": done.lufs,
         "true_peak_db": done.true_peak_db,
+        "clipped": done.peak_db > 0.0,
     }))
 }
 
@@ -370,7 +371,14 @@ pub fn bounce_job(e: &Engine, p: &Value) -> Result<crate::io::Bounce> {
     let normalize = bool_or(p, "normalize", false);
     let fold = fold_down_param(p, "file.bounce_mix")?;
     let bus = bounce_bus(e, p)?;
-    crate::io::Bounce::new(e.session_arc(), std::path::Path::new(&path), r, &opts, bus, normalize, fold)
+    let normalize_db = match p.get("normalize_db") {
+        None | Some(Value::Null) => -0.1,
+        Some(v) => match v.as_f64() {
+            Some(db) if (-24.0..=0.0).contains(&db) => db as f32,
+            _ => return Err(bad("file.bounce_mix", "`normalize_db` must be between -24 and 0 dBFS")),
+        },
+    };
+    Ok(crate::io::Bounce::new(e.session_arc(), std::path::Path::new(&path), r, &opts, bus, normalize, fold)?.normalize_to(normalize_db))
 }
 
 /// Write the score of the chosen MIDI tracks as MusicXML (or SVG when `svg`).

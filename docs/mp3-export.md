@@ -16,6 +16,12 @@ The window also offers:
   frame, so the gapless timing is unchanged.
 - A warning when the file already exists: **Bounce** becomes **Replace**, and only that second
   press writes over it.
+- **Normalize to** -0.1, -0.5 or -1.0 dBFS (-1.0 by default: room for MP3 and club systems). From
+  scripts: `"normalize": true, "normalize_db": -1.0` (-24 to 0; -0.1 when omitted).
+
+When a bounce goes over full scale, the status line says so with its peak, and the command's result
+has `"clipped": true`. Separated stems played back together often add up past 0 dBFS: tick
+Normalize.
 
 ## What CDJs need, and what SoundCraft writes
 
