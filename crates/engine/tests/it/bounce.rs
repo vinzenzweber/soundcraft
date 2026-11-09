@@ -226,3 +226,32 @@ fn mp3_bounces_take_a_sample_rate_and_id3_tags() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A bounce that goes over full scale says so, and Normalize can bring it to a chosen peak level.
+#[test]
+fn bounces_report_clipping_and_normalize_to_a_chosen_level() {
+    let mut e = soundcraft_engine::Engine::default();
+    let sr = e.session().sample_rate.hz();
+    let frames = sr as usize;
+    let loud: Vec<f32> = (0..frames).map(|i| 1.5 * (std::f32::consts::TAU * 220.0 * i as f32 / sr as f32).sin()).collect();
+    let audio = soundcraft_audio_io::AudioBuffer { sample_rate: sr, channels: vec![loud.clone(), loud] };
+    let s = e.session_mut();
+    let track = s.add_track(soundcraft_model::TrackKind::Audio, soundcraft_model::ChannelFormat::Stereo, Some("Loud"));
+    let source = soundcraft_engine::io::add_source(s, "loud", audio, None, FileFormat::Wav);
+    let clip = soundcraft_model::Clip::audio(s.new_clip_id(), "loud", source, 0, 0, frames as i64);
+    soundcraft_engine::edit::place_clip(s, track, clip);
+    let dir = scratch("bounce-clip-level");
+    let path = dir.join("Loud.wav");
+    let run = |e: &mut soundcraft_engine::Engine, extra: serde_json::Value| {
+        let mut p = serde_json::json!({"path": path, "bit_depth": "24", "dither": false, "start": 0, "end": frames});
+        p.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        e.execute("file.bounce_mix", &p)
+    };
+    let raw = run(&mut e, serde_json::json!({})).unwrap();
+    assert_eq!(raw["clipped"], true, "{raw}");
+    let fixed = run(&mut e, serde_json::json!({"normalize": true, "normalize_db": -1.0})).unwrap();
+    assert_eq!(fixed["clipped"], false);
+    assert!((fixed["peak_db"].as_f64().unwrap() + 1.0).abs() < 0.01, "{fixed}");
+    assert!(run(&mut e, serde_json::json!({"normalize": true, "normalize_db": 3.0})).is_err(), "above 0 dBFS is refused");
+    let _ = std::fs::remove_dir_all(&dir);
+}

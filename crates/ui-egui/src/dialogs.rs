@@ -42,6 +42,8 @@ pub enum Dialog {
         format: FileFormat,
         bit_depth: String,
         normalize: bool,
+        /// The peak level Normalize brings the bounce to, in dBFS.
+        normalize_db: f32,
         dither: bool,
         /// MP3 only: 44 100 or 48 000 Hz.
         mp3_rate: u32,
@@ -265,6 +267,7 @@ impl Dialogs {
                     format: FileFormat::Wav,
                     bit_depth: "24".into(),
                     normalize: false,
+                    normalize_db: -1.0,
                     dither: false,
                     mp3_rate: 44_100,
                     title: name.clone(),
@@ -374,7 +377,7 @@ fn clear_message(s: &Session, clips: &[ClipId], sources: &[SourceId]) -> Option<
 
 /// The Bounce Mix form; returns the `file.bounce_mix` params when Bounce (or Replace) is pressed.
 fn bounce_form(app: &mut SoundApp, ui: &mut egui::Ui, enter: bool, d: &mut Dialog) -> Option<serde_json::Value> {
-    let Dialog::Bounce { path, format, bit_depth, normalize, dither, mp3_rate, title, artist, bpm, replace } = d else {
+    let Dialog::Bounce { path, format, bit_depth, normalize, normalize_db, dither, mp3_rate, title, artist, bpm, replace } = d else {
         return None;
     };
     bounce_file_row(app, ui, path, format);
@@ -404,7 +407,7 @@ fn bounce_form(app: &mut SoundApp, ui: &mut egui::Ui, enter: bool, d: &mut Dialo
     if *format == FileFormat::Mp3 {
         mp3_tag_fields(ui, title, artist, bpm);
     }
-    crate::widgets::checkbox(ui, normalize, "Normalize to -0.1 dBFS");
+    normalize_row(ui, normalize, normalize_db);
     // 32-bit float keeps every sample as it is: there is nothing to dither.
     ui.add_enabled_ui(bit_depth.as_str() != "32f" && *format != FileFormat::Mp3, |ui| {
         crate::widgets::checkbox(ui, dither, "Dither (TPDF)")
@@ -419,7 +422,7 @@ fn bounce_form(app: &mut SoundApp, ui: &mut egui::Ui, enter: bool, d: &mut Dialo
         if !replacing && std::path::Path::new(&target).exists() {
             *replace = Some(target);
         } else {
-            let mut p = json!({"path": target, "format": format.default_extension(), "bit_depth": bit_depth, "normalize": normalize, "dither": *dither && bit_depth.as_str() != "32f"});
+            let mut p = json!({"path": target, "format": format.default_extension(), "bit_depth": bit_depth, "normalize": normalize, "normalize_db": normalize_db, "dither": *dither && bit_depth.as_str() != "32f"});
             if *format == FileFormat::Mp3 {
                 add_mp3_params(&mut p, *mp3_rate, title, artist, bpm);
             }
@@ -427,6 +430,22 @@ fn bounce_form(app: &mut SoundApp, ui: &mut egui::Ui, enter: bool, d: &mut Dialo
         }
     }
     None
+}
+
+/// The Bounce form's Normalize checkbox and the peak level it brings the bounce to.
+fn normalize_row(ui: &mut egui::Ui, normalize: &mut bool, db: &mut f32) {
+    ui.horizontal(|ui| {
+        crate::widgets::checkbox(ui, normalize, "Normalize to")
+            .on_hover_text("Brings the loudest peak to this level, so the file never clips. -1 dBFS leaves room for MP3 and club systems.");
+        ui.add_enabled_ui(*normalize, |ui| {
+            let level = craft_ui::ComboBox::from_id_salt("normalize_db").selected_text(format!("{db:.1} dBFS")).show_ui(ui, |ui| {
+                for level in [-0.1f32, -0.5, -1.0] {
+                    ui.selectable_value(db, level, format!("{level:.1} dBFS"));
+                }
+            });
+            level.response.accessible_name("Normalize level");
+        });
+    });
 }
 
 /// The Bounce form's MP3 tag fields: title, artist and BPM.
