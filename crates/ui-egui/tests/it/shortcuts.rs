@@ -126,7 +126,11 @@ fn app_frame(ctx: &egui::Context, app: &mut SoundApp, events: Vec<egui::Event>) 
 }
 
 fn arrow(key: Key) -> Vec<egui::Event> {
-    [true, false].map(|pressed| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: Modifiers::NONE }).to_vec()
+    arrow_with(key, Modifiers::NONE)
+}
+
+fn arrow_with(key: Key, modifiers: Modifiers) -> Vec<egui::Event> {
+    [true, false].map(|pressed| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers }).to_vec()
 }
 
 /// Where `at` is drawn in the Edit window's timeline, and the timeline's middle (#1376).
@@ -135,32 +139,39 @@ fn x_and_middle(app: &SoundApp, at: i64) -> (f32, f32) {
     (soundcraft_ui_egui::edit_window::x_of(app.engine.session(), tl, at), tl.center().x)
 }
 
+/// Left/Right move the playhead 5 s, Alt with them 1 s, never before the start, and the Edit window follows it.
 #[test]
-fn left_and_right_arrows_centre_the_edit_window_on_the_selected_clip() {
+fn left_and_right_arrows_move_the_playhead_and_keep_it_in_view() {
     let mut app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
     let ctx = egui::Context::default();
     let (clip_id, clip) = app.engine.session().tracks.iter().flat_map(|t| t.clips()).find(|c| c.start > 100_000).map(|c| (c.id, c.range())).unwrap();
+    let sec = |s: f64| app.engine.session().sample_rate.samples(s);
+    let (five, one) = (sec(5.0), sec(1.0));
     app.run("view.zoom_set", json!({"samples_per_px": 10.0})).unwrap();
     app.run("view.scroll", json!({"to": 0})).unwrap();
     for _ in 0..3 {
         app_frame(&ctx, &mut app, vec![]);
     }
+    // A selected clip does not pin the playhead: each press moves on from where the last one left it.
     app.run("edit.select", json!({"clips": [clip_id.0]})).unwrap();
-    assert!(x_and_middle(&app, clip.start).0 > app.edit_layout.timeline[2], "the clip starts off-screen");
-
-    app_frame(&ctx, &mut app, arrow(Key::ArrowLeft));
-    let (x, middle) = x_and_middle(&app, clip.start);
-    assert!((x - middle).abs() < 1.0, "Left: the clip start at {x}, the middle at {middle}");
     app_frame(&ctx, &mut app, arrow(Key::ArrowRight));
-    let (x, middle) = x_and_middle(&app, clip.end);
-    assert!((x - middle).abs() < 1.0, "Right: the clip end at {x}, the middle at {middle}");
-
-    // An insertion point alone leaves the view where it is.
-    app.run("edit.select", json!({"start": clip.start})).unwrap();
-    let scroll = app.engine.session().edit.zoom.scroll;
-    app_frame(&ctx, &mut app, arrow(Key::ArrowLeft));
+    assert_eq!(app.position(), clip.start + five);
+    assert_eq!(app.engine.session().edit.playhead, clip.start + five);
     app_frame(&ctx, &mut app, arrow(Key::ArrowRight));
-    assert_eq!(app.engine.session().edit.zoom.scroll, scroll);
+    assert_eq!(app.position(), clip.start + 2 * five);
+    let (x, _) = x_and_middle(&app, app.position());
+    let [x0, _, x1, _] = app.edit_layout.timeline;
+    assert!((x0..=x1).contains(&x), "the playhead at {x} is in view ({x0}..{x1})");
+
+    app_frame(&ctx, &mut app, arrow_with(Key::ArrowLeft, Modifiers::ALT));
+    assert_eq!(app.position(), clip.start + 2 * five - one);
+    app_frame(&ctx, &mut app, arrow_with(Key::ArrowRight, Modifiers::ALT));
+    assert_eq!(app.position(), clip.start + 2 * five);
+
+    for _ in 0..20 {
+        app_frame(&ctx, &mut app, arrow(Key::ArrowLeft));
+    }
+    assert_eq!(app.position(), 0, "Left stops at the start");
 }
 
 /// Over the piano roll the arrows move the selected note and leave the Edit window's view alone.
@@ -185,14 +196,15 @@ fn the_piano_roll_keeps_the_plain_arrows() {
             _ => panic!("not a MIDI clip"),
         }
     };
-    let (before, scroll) = (note_start(&app), app.engine.session().edit.zoom.scroll);
+    let (before, scroll, at) = (note_start(&app), app.engine.session().edit.zoom.scroll, app.position());
     app_frame(&ctx, &mut app, arrow(Key::ArrowRight));
     assert!(note_start(&app) > before, "the note moved right");
     assert_eq!(app.engine.session().edit.zoom.scroll, scroll, "the Edit window kept its view");
+    assert_eq!(app.position(), at, "the playhead stayed");
 }
 
 /// The MIDI editor open behind another tab has no piano roll on screen: the panel in front of it takes no
-/// arrows, so they centre the Edit window there as anywhere else.
+/// arrows, so they move the playhead there as anywhere else.
 #[test]
 fn a_midi_editor_behind_another_tab_leaves_the_arrows_to_the_edit_window() {
     let mut app = SoundApp::new(soundcraft_engine::demo::demo_engine(), None, Services::default());
@@ -215,7 +227,6 @@ fn a_midi_editor_behind_another_tab_leaves_the_arrows_to_the_edit_window() {
     app_frame(&ctx, &mut app, vec![egui::Event::PointerMoved(body.center())]);
     app.run("edit.select", json!({"clips": [clip_id.0]})).unwrap();
 
-    app_frame(&ctx, &mut app, arrow(Key::ArrowLeft));
-    let (x, middle) = x_and_middle(&app, clip.start);
-    assert!((x - middle).abs() < 1.0, "Left: the clip start at {x}, the middle at {middle}");
+    app_frame(&ctx, &mut app, arrow(Key::ArrowRight));
+    assert_eq!(app.position(), clip.start + app.engine.session().sample_rate.samples(5.0));
 }
