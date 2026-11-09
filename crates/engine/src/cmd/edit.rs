@@ -130,8 +130,8 @@ pub fn specs() -> Vec<CommandSpec> {
             "Create...",
             ["Edit", "Fades"],
             Some("Cmd+F"),
-            "{shape?: linear|equal power|s-curve|exponential|logarithmic, tracks?, start?, end?} or {clip: id, side: in|out, length: samples, shape?, curvature?: -1..1}",
-            has_range,
+            "{shape?: linear|equal power|s-curve|exponential|logarithmic, tracks?, start?, end?} or {clip: id, side: in|out, length: samples, shape?, curvature?: -1..1}; an insertion point fades the nearest clip edge within 1 s over 10 ms",
+            has_selection,
             fades_create
         ),
         cmd!("edit.fades_delete", "Delete", ["Edit", "Fades"], None, "{tracks?, start?, end?}", has_selection, fades_delete),
@@ -864,6 +864,20 @@ pub(super) fn strip_names(cmd: &str, p: &Value) -> Result<Option<crate::io::Stri
     Ok(Some(StripNames { name, number: number.unwrap_or(d.number), zeros: zeros.and_then(|z| usize::try_from(z).ok()).unwrap_or(d.zeros), suffix }))
 }
 
+/// How long the fade at a clip edge is when Create Fades runs on an insertion point: long enough to
+/// remove a click, short enough not to be heard as a fade.
+const QUICK_FADE_SECS: f64 = 0.010;
+
+/// The clip start or end on `track` nearest `at`, if one is within `reach` samples.
+fn nearest_clip_edge(s: &Session, track: TrackId, at: Samples, reach: Samples) -> Option<Samples> {
+    s.track(track)?
+        .clips()
+        .iter()
+        .flat_map(|c| [c.start, c.end()])
+        .filter(|edge| edge.abs_diff(at) <= reach.unsigned_abs())
+        .min_by_key(|edge| edge.abs_diff(at))
+}
+
 fn fades_create(e: &mut Engine, p: &Value) -> Result<Value> {
     let shape = match p.get("shape") {
         None => FadeShape::EqualPower,
@@ -913,8 +927,21 @@ fn fades_create(e: &mut Engine, p: &Value) -> Result<Value> {
     }
     let tracks = tracks_required(e, "edit.fades_create", p)?;
     let r = range_param(e, "edit.fades_create", p)?;
+    let (half, reach) = (e.session().sample_rate.samples(QUICK_FADE_SECS / 2.0), e.session().sample_rate.samples(1.0));
     let s = e.session_mut();
-    let n: usize = tracks.iter().map(|t| ops::create_fades(s, *t, r, shape)).sum();
+    let n: usize = tracks
+        .iter()
+        .map(|t| {
+            // An insertion point fades the nearest clip edge: a crossfade at a join, else a fade in or out.
+            let range = if r.is_empty() {
+                nearest_clip_edge(s, *t, r.start, reach)
+                    .map_or(r, |edge| soundcraft_time::Range::new(edge.saturating_sub(half), edge.saturating_add(half)))
+            } else {
+                r
+            };
+            ops::create_fades(s, *t, range, shape)
+        })
+        .sum();
     if n == 0 {
         return Err(bad("edit.fades_create", "the selection must cover a clip start, end or the boundary between two clips"));
     }
@@ -1275,6 +1302,23 @@ mod tests {
         assert_eq!((faded[0].1, faded[1].0), (10_500, 9_500), "the fixture needs an overlapping crossfade");
         e.execute("edit.trim_to_file_boundaries", &json!({"clips": [ids[1].0]})).unwrap();
         assert_eq!(bounds(&e, t), vec![faded[0], (9_500, 60_000, 9_500)]);
+    }
+
+    #[test]
+    fn create_fades_on_an_insertion_point_crossfades_the_nearest_join() {
+        let (mut e, t, ids) = trim_session(&[(0, 10_000, 0), (10_000, 10_000, 10_000), (30_000, 10_000, 30_000)]);
+        let half = e.session().sample_rate.samples(QUICK_FADE_SECS / 2.0);
+        // Near the join, not on it: a click a little after it.
+        e.execute("edit.select", &json!({"tracks": [t], "start": 10_300})).unwrap();
+        e.execute("edit.fades_create", &json!({})).unwrap();
+        let s = e.session();
+        let clip = |i: usize| s.find_clip(ids[i]).unwrap().1.clone();
+        assert_eq!((clip(0).fade_out.len, clip(1).fade_in.len), (2 * half, 2 * half), "a 10 ms crossfade over the join");
+        assert_eq!((clip(0).end(), clip(1).start), (10_000 + half, 10_000 - half));
+        assert_eq!((clip(2).fade_in.len, clip(2).fade_out.len), (0, 0), "the farther clip is left alone");
+        // No clip edge within a second: nothing to fade.
+        e.execute("edit.select", &json!({"tracks": [t], "start": 200_000})).unwrap();
+        assert!(e.execute("edit.fades_create", &json!({})).is_err());
     }
 
     #[test]
