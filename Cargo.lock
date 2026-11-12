@@ -10360,7 +10360,9 @@ version = "0.17.0"
 dependencies = [
  "craft-docpath",
  "log",
+ "percent-encoding",
  "proptest",
+ "quick-xml 0.42.0",
  "serde",
  "serde_json",
  "soundcraft-au-host",
@@ -10376,6 +10378,7 @@ dependencies = [
  "soundcraft-video",
  "soundcraft-vst3-host",
  "thiserror 2.0.21",
+ "unicode-normalization",
  "zip 9.1.3",
 ]
 

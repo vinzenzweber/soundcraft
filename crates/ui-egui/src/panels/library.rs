@@ -206,7 +206,7 @@ fn tree_panel(app: &mut SoundApp, ui: &mut Ui) {
             .collect()
     };
     let total = app.engine.library.tracks.len();
-    egui::ScrollArea::vertical().id_salt("library-tree-scroll").auto_shrink([false, false]).max_height(ui.available_height() - 24.0).show(ui, |ui| {
+    egui::ScrollArea::vertical().id_salt("library-tree-scroll").auto_shrink([false, false]).max_height(ui.available_height() - 50.0).show(ui, |ui| {
         tree_row(app, ui, None, "All tracks", None, 0, total, false);
         for (id, name, kind, depth, count, collapsed) in nodes {
             tree_row(app, ui, Some(id), &name, Some(kind), depth, count, collapsed);
@@ -240,6 +240,56 @@ fn tree_panel(app: &mut SoundApp, ui: &mut Ui) {
     if resp.clicked() && !syncing {
         start_sync(app, ui.ctx());
     }
+    // Above the source line: bring in a rekordbox export.
+    let ir = Rect::from_min_size(pos2(r.min.x + 6.0, r.min.y - 24.0), vec2(r.width() - 12.0, 20.0));
+    let imported = app.engine.library.rekordbox_at.is_some();
+    let label = if imported { "Import rekordbox XML again…" } else { "Import from rekordbox…" };
+    if ui
+        .put(ir, egui::Button::new(egui::RichText::new(label).font(regular(11.0))))
+        .on_hover_text(
+            "In rekordbox: File › Export Collection in xml format, then pick that file here. Its folders and playlists \
+             land in a \"rekordbox\" folder (replaced on each import), and its key, BPM, rating, colour, comments and cues \
+             are kept with each track. rekordbox is never changed.",
+        )
+        .clicked()
+    {
+        import_rekordbox(app);
+    }
+}
+
+/// Picks a rekordbox XML export and imports it.
+fn import_rekordbox(app: &mut SoundApp) {
+    let Some(pick) = &app.services.pick_open else {
+        app.library.status = "Choosing a file is not available here; use the library.import_rekordbox command".into();
+        return;
+    };
+    let Some(path) = pick("library.import_rekordbox", &["xml"]) else { return };
+    let path = match crate::dialogs::unicode(&path) {
+        Ok(p) => p,
+        Err(e) => {
+            app.library.status = e.to_string();
+            return;
+        }
+    };
+    app.library.status = match app.run("library.import_rekordbox", json!({"path": path})) {
+        Ok(v) => {
+            if let Some(root) = v["folder"].as_u64() {
+                app.library.collapsed.remove(&root);
+            }
+            format!(
+                "rekordbox: {} playlists in {} folders · {} tracks matched · {} only in rekordbox{}",
+                v["playlists"],
+                v["folders"],
+                v["matched"],
+                v["added"],
+                match v["missing"].as_u64() {
+                    Some(0) | None => String::new(),
+                    Some(n) => format!(" · {n} without a file left out"),
+                }
+            )
+        }
+        Err(e) => e,
+    };
 }
 
 fn new_node(app: &mut SoundApp, command: &str, name: &str, parent: Option<u64>) {
@@ -482,6 +532,7 @@ fn widths(columns: &[Column], lists: bool, w: f32) -> (f32, Vec<(Column, f32)>, 
         Column::Bpm => Some(52.0),
         Column::Key => Some(46.0),
         Column::Time => Some(54.0),
+        Column::Rating => Some(66.0),
         _ => None,
     };
     let flex = |c: Column| match c {
@@ -535,25 +586,23 @@ fn tracks_panel(app: &mut SoundApp, ui: &mut Ui) {
         }
     }
     bar_ui.add_space(8.0);
-    for c in Column::ALL {
-        let on = columns.contains(&c);
-        let label = format!("{} {}", if on { "✓" } else { "+" }, if c == Column::Title { "Title" } else { c.label() });
-        if bar_ui
-            .add(
-                egui::Button::new(egui::RichText::new(label).font(regular(11.0)).color(if on { t.text } else { t.text_dim }))
-                    .selected(on)
-                    .min_size(vec2(0.0, 20.0)),
-            )
-            .on_hover_text(if on { "Hide this column (it is then not searched)" } else { "Show this column (it is then searched)" })
-            .clicked()
-        {
-            let mut next: Vec<Column> = Column::ALL.into_iter().filter(|x| if *x == c { !on } else { columns.contains(x) }).collect();
-            if next.is_empty() {
-                next.push(Column::Title);
+    let shown_names: Vec<&str> = columns.iter().map(|c| if *c == Column::Title { "Title" } else { c.label() }).collect();
+    bar_ui
+        .menu_button(egui::RichText::new(format!("Columns: {}", shown_names.join(", "))).font(regular(11.0)), |ui| {
+            ui.label(egui::RichText::new("Shown columns are searched").font(regular(10.5)).color(t.text_dim));
+            for c in Column::ALL {
+                let mut on = columns.contains(&c);
+                if ui.checkbox(&mut on, c.label()).changed() {
+                    let mut next: Vec<Column> = Column::ALL.into_iter().filter(|x| if *x == c { on } else { columns.contains(x) }).collect();
+                    if next.is_empty() {
+                        next.push(Column::Title);
+                    }
+                    app.ui.library_columns = next.iter().map(|c| c.id().to_string()).collect();
+                }
             }
-            app.ui.library_columns = next.iter().map(|c| c.id().to_string()).collect();
-        }
-    }
+        })
+        .response
+        .on_hover_text("Choose the columns; a hidden column is not searched unless you name it (genre:afro)");
     // What the search understood.
     let (rows, understood, total) = rows(app, &columns);
     let info = Rect::from_min_size(pos2(full.min.x, bar.max.y), vec2(full.width(), 22.0));
@@ -667,6 +716,9 @@ fn track_row(
         t.playlist_bg
     };
     ui.painter().rect_filled(r, 0.0, bg);
+    if let Some([cr, cg, cb]) = row.track.colour() {
+        ui.painter().rect_filled(Rect::from_min_size(r.min, vec2(3.0, r.height())), 0.0, Color32::from_rgb(cr, cg, cb));
+    }
     let p = ui.painter().with_clip_rect(r.intersect(ui.clip_rect()));
     let fg = if selected { Color32::WHITE } else { t.text };
     p.text(pos2(r.min.x + 10.0, r.center().y), Align2::LEFT_CENTER, (i + 1).to_string(), mono(10.0), t.text_dim);
@@ -674,7 +726,7 @@ fn track_row(
     for (c, w) in cols {
         let cell = Rect::from_min_max(pos2(x, r.min.y), pos2(x + w - 8.0, r.max.y));
         match c {
-            Column::Title | Column::Artist | Column::Genre => {
+            Column::Title | Column::Artist | Column::Genre | Column::Comment => {
                 let text = c.text(&row.track);
                 let color = if *c == Column::Title {
                     fg
@@ -688,12 +740,24 @@ fn track_row(
                 p.with_clip_rect(cell).galley(pos2(cell.min.x, cell.center().y - g.size().y * 0.5), g, color);
             }
             Column::Bpm | Column::Time => {
-                let text = if *c == Column::Bpm { row.track.bpm.map_or("—".into(), |b| b.to_string()) } else { format_time(row.track.seconds) };
+                let text = if *c == Column::Bpm { row.track.bpm().map_or("—".into(), |b| b.to_string()) } else { format_time(row.track.seconds) };
                 p.text(pos2(x + w - 10.0, r.center().y), Align2::RIGHT_CENTER, text, mono(11.0), if *c == Column::Bpm { fg } else { t.text_dim });
             }
+            Column::Rating => {
+                // Five dots, the rated ones lit.
+                let stars = row.track.rating();
+                for s in 0..5u8 {
+                    let c = pos2(x + 5.0 + f32::from(s) * 11.0, r.center().y);
+                    if s < stars {
+                        p.circle_filled(c, 3.5, t.solo);
+                    } else {
+                        p.circle_stroke(c, 3.0, Stroke::new(1.0, t.border_light));
+                    }
+                }
+            }
             Column::Key => {
-                let (text, color) = match &row.track.key {
-                    Some(k) => (k.clone(), t.counter_text),
+                let (text, color) = match row.track.key() {
+                    Some(k) => (k.to_string(), t.counter_text),
                     None => ("—".into(), t.text_dim),
                 };
                 p.text(pos2(x, r.center().y), Align2::LEFT_CENTER, text, mono(11.0), color);

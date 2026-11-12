@@ -92,6 +92,7 @@ pub(crate) fn parse(json: &[u8], name: &str) -> Result<Vec<Track>, String> {
             genre: text(c.genre.get(i)),
             seconds,
             path: (!path.is_empty()).then_some(path),
+            rb: None,
         });
     }
     Ok(tracks)
