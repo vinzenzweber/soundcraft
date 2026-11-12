@@ -90,6 +90,10 @@ pub struct UiState {
     pub show_audio_health: bool,
     pub show_about: bool,
     pub show_midi_editor: bool,
+    /// The DJ Library panel (Window › DJ Library).
+    pub show_dj_library: bool,
+    /// The DJ Library's shown columns, which its search looks in: title, artist, bpm, key, genre, time.
+    pub library_columns: Vec<String>,
     pub show_universe: bool,
     pub narrow_mix: bool,
     /// Mix window sections: inserts_ae, inserts_fj, sends_ae, sends_fj, io, comments, eq_curve, color.
@@ -171,6 +175,8 @@ impl Default for UiState {
             show_audio_health: false,
             show_about: false,
             show_midi_editor: false,
+            show_dj_library: false,
+            library_columns: soundcraft_engine::library::search::Column::DEFAULT.iter().map(|c| c.id().to_string()).collect(),
             show_universe: false,
             narrow_mix: false,
             mix_views: vec!["inserts_ae".into(), "sends_ae".into(), "io".into(), "color".into()],
@@ -405,6 +411,8 @@ pub struct SoundApp {
     /// When Record last found nothing to record on, and why: the Record buttons show it for a moment.
     record_hint: Option<(f64, &'static str)>,
     pub quit_requested: bool,
+    /// The DJ Library panel's own state (search, selection, a sync in progress).
+    pub library: panels::library::LibraryPanel,
     /// Reset floating-window positions next frame (Window › Arrange).
     pub arrange_request: bool,
     /// Tracks whose automation was touched during this pass (Touch/Latch writing).

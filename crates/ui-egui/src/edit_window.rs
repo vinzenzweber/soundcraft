@@ -65,12 +65,30 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
     crate::docking::show(app, ui, crate::MainWindow::Edit);
 }
 
-/// Three dock toggle tabs for MIDI Editor, Memory Locations and Undo History.
+/// A DJ Library track dragged over the timeline: on release it is added to the session at the
+/// drop point, on a new track (`draw: false`, before the track rows); while dragging, a line
+/// shows where it lands (`draw: true`, over them).
+fn library_drop(app: &mut SoundApp, ui: &mut Ui, tl: Rect, draw: bool) {
+    let Some(drag) = egui::DragAndDrop::payload::<crate::panels::library::TrackDrag>(ui.ctx()) else { return };
+    let Some(pos) = ui.ctx().pointer_latest_pos().filter(|p| tl.contains(*p)) else { return };
+    let at = layout::sample_at(app.engine.session(), tl, pos.x).max(0);
+    if draw {
+        let t = Tokens::current();
+        ui.painter().line_segment([pos2(pos.x, tl.min.y), pos2(pos.x, tl.max.y)], egui::Stroke::new(2.0, t.accent));
+        ui.painter().text(pos2(pos.x + 6.0, tl.min.y + 4.0), Align2::LEFT_TOP, format!("{} → new track", drag.title), bold(11.5), t.text);
+    } else if ui.input(|i| i.pointer.any_released()) {
+        egui::DragAndDrop::clear_payload(ui.ctx());
+        crate::panels::library::drop_on_timeline(app, &drag, at);
+    }
+}
+
+/// Dock toggle tabs for the DJ Library, MIDI Editor, Memory Locations and Undo History.
 fn dock_tabs(app: &mut SoundApp, ui: &mut Ui) {
     let t = Tokens::current();
     let r = ui.max_rect();
     let mut x = r.min.x + 10.0;
     for (label, on, id) in [
+        ("DJ LIBRARY", app.ui.show_dj_library, "window.dj_library"),
         ("MIDI EDITOR", app.ui.show_midi_editor, "window.midi_editor"),
         ("MEMORY LOCATIONS", app.ui.show_memory_locations, "window.memory_locations"),
         ("UNDO HISTORY", app.ui.show_undo_history, "window.undo_history"),
@@ -155,6 +173,8 @@ fn main_area_content(app: &mut SoundApp, ui: &mut Ui) {
     if let Some(id) = app.edit_scroll_into_view.take() {
         scroll_into_view(app, id, tl.height());
     }
+    // Before the track rows: their own drop targets take any payload released over them.
+    library_drop(app, ui, tl, false);
     // Tracks.
     let mut y = tl.min.y - app.edit_layout.scroll_y;
     app.edit_layout.rows.clear();
@@ -192,6 +212,7 @@ fn main_area_content(app: &mut SoundApp, ui: &mut Ui) {
         }
     }
     overlay(app, ui, tl, Rect::from_min_max(pos2(tl.min.x, rulers_rect.min.y), tl.max));
+    library_drop(app, ui, tl, true);
     let _ = header;
     // Horizontal scrollbar.
     let sb = Rect::from_min_max(pos2(tl.min.x, full.max.y - hscroll_h), pos2(tl.max.x, full.max.y));

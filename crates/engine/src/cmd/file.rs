@@ -228,7 +228,7 @@ fn new_session(e: &mut Engine, p: &Value) -> Result<Value> {
     Ok(json!({"name": e.session().name, "sample_rate": e.session().sample_rate.hz()}))
 }
 
-fn import_audio(e: &mut Engine, p: &Value) -> Result<Value> {
+pub(super) fn import_audio(e: &mut Engine, p: &Value) -> Result<Value> {
     let mut paths: Vec<String> =
         p.get("paths").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
     if let Some(one) = str_param(p, "path") {

@@ -20,6 +20,7 @@ mod event_more;
 mod file;
 mod health;
 mod instrument;
+mod library;
 mod lyrics;
 mod midi;
 mod mix;
@@ -168,6 +169,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(strip_silence::specs());
         v.extend(stems::specs());
         v.extend(lyrics::specs());
+        v.extend(library::specs());
         #[cfg(test)]
         v.extend(panic_probe::specs());
         v
