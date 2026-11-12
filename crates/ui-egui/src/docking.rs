@@ -18,10 +18,11 @@ pub enum Panel {
     Midi,
     Memory,
     History,
+    Library,
 }
 
 impl Panel {
-    pub const ALL: &[Self] = &[Self::Canvas, Self::Tracks, Self::Clips, Self::Midi, Self::Memory, Self::History];
+    pub const ALL: &[Self] = &[Self::Canvas, Self::Tracks, Self::Clips, Self::Midi, Self::Memory, Self::History, Self::Library];
     fn label(self) -> &'static str {
         match self {
             Self::Canvas => "Session",
@@ -30,6 +31,7 @@ impl Panel {
             Self::Midi => "MIDI Editor",
             Self::Memory => "Memory Locations",
             Self::History => "Undo History",
+            Self::Library => "DJ Library",
         }
     }
 }
@@ -194,8 +196,8 @@ pub fn validate(workspace: &Workspace) -> Result<(), String> {
 /// [`validate`] plus the Mix window's rule: Clips and MIDI stay in Edit.
 pub fn validate_mix(workspace: &Workspace) -> Result<(), String> {
     validate(workspace)?;
-    if workspace.layout.contains(&Panel::Clips) || workspace.layout.contains(&Panel::Midi) {
-        return Err("Clips and MIDI panels belong to the Edit window".into());
+    if [Panel::Clips, Panel::Midi, Panel::Library].iter().any(|p| workspace.layout.contains(p)) {
+        return Err("Clips, MIDI and DJ Library panels belong to the Edit window".into());
     }
     Ok(())
 }
@@ -287,6 +289,10 @@ fn set_visible(workspace: &mut Workspace, panel: Panel, visible: bool) -> Result
         let actions = match (dock, default_float(panel)) {
             (Some((side, width)), _) => vec![open, Action::MovePanel { panel, to: Target::NewDock { side } }, Action::ResizeColumn { panel, width }],
             (None, Some(rect)) => vec![open, Action::Float { panel, rect }],
+            // The DJ Library shares the MIDI editor's frame under the session when it is open.
+            (None, None) if panel == Panel::Library && next.layout.contains(&Panel::Midi) => {
+                vec![Action::OpenAt { panel, anchor: Panel::Midi, placement: Placement::Tab { before: None } }]
+            }
             (None, None) => vec![Action::OpenAt { panel, anchor: Panel::Canvas, placement: Placement::Split(Zone::Bottom) }],
         };
         next.apply_all(actions, permissions)?;
@@ -314,6 +320,7 @@ fn sync(workspace: &mut Workspace, app: &crate::SoundApp, edit: bool) -> Result<
     if edit {
         set_visible(workspace, Panel::Clips, app.ui.show_clip_list)?;
         set_visible(workspace, Panel::Midi, app.ui.show_midi_editor)?;
+        set_visible(workspace, Panel::Library, app.ui.show_dj_library)?;
     }
     Ok(())
 }
@@ -325,6 +332,7 @@ fn publish_visibility(app: &mut crate::SoundApp, workspace: &Workspace, edit: bo
     if edit {
         app.ui.show_clip_list = workspace.layout.contains(&Panel::Clips);
         app.ui.show_midi_editor = workspace.layout.contains(&Panel::Midi);
+        app.ui.show_dj_library = workspace.layout.contains(&Panel::Library);
     }
 }
 
@@ -361,8 +369,8 @@ fn operation(fields: &serde_json::Map<String, Value>) -> Result<DockOperation<Pa
 /// front window's workspace.
 pub fn command(app: &mut crate::SoundApp, id: &str, params: &Value) -> Result<Value, String> {
     let edit = app.ui.window == crate::MainWindow::Edit;
-    if !edit && ["panel", "target"].iter().any(|field| matches!(params.get(*field).and_then(Value::as_str), Some("clips" | "midi"))) {
-        return Err("Clips and MIDI panels belong to the Edit window".into());
+    if !edit && ["panel", "target"].iter().any(|field| matches!(params.get(*field).and_then(Value::as_str), Some("clips" | "midi" | "library"))) {
+        return Err("Clips, MIDI and DJ Library panels belong to the Edit window".into());
     }
     let mut fields = match params {
         Value::Object(fields) => fields.clone(),
@@ -501,6 +509,7 @@ pub fn show(app: &mut crate::SoundApp, ui: &mut egui::Ui, window: crate::MainWin
             }
             Panel::Memory => crate::panels::memory_locations(app, ui),
             Panel::History => crate::panels::undo_history(app, ui),
+            Panel::Library => minimum_body(ui, egui::vec2(560.0, 160.0), |ui| crate::panels::library::dj_library(app, ui)),
         },
     );
     let _ = sync(&mut workspace, app, edit);
@@ -537,6 +546,7 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
         Panel::Midi => (egui::vec2(420.0, 260.0), 1_000_000.0),
         Panel::Memory => (egui::vec2(260.0, 160.0), 1_000_000.0),
         Panel::History => (egui::vec2(200.0, 160.0), 720.0),
+        Panel::Library => (egui::vec2(420.0, 160.0), 1_000_000.0),
     };
     PanelLimits { min, max: egui::vec2(max_width, 1_000_000.0) }
 }

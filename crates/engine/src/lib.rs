@@ -16,6 +16,8 @@ pub mod edit;
 pub mod file_access;
 pub mod inspect;
 pub mod io;
+pub mod library;
+pub mod library_store;
 pub mod score;
 
 use serde_json::{Value, json};
@@ -215,6 +217,12 @@ pub struct Engine {
     stems_offer: Option<cmd::StemsDone>,
     /// A transcription finished off the UI thread, waiting for its `lyrics.transcribe`.
     lyrics_offer: Option<cmd::LyricsDone>,
+    /// The DJ library (app data, not part of the session; its commands have no undo).
+    pub library: library::Library,
+    /// Where the DJ library is saved after each change (the app's settings folder); unsaved when unset.
+    pub library_path: Option<std::path::PathBuf>,
+    /// A read of a Music playlist made off the UI thread, waiting for its `library.sync`.
+    library_offer: Option<(String, std::result::Result<Vec<library::Track>, String>)>,
 }
 
 impl Default for Engine {
@@ -249,6 +257,43 @@ impl Engine {
             models_dir: None,
             stems_offer: None,
             lyrics_offer: None,
+            library: library::Library::default(),
+            library_path: None,
+            library_offer: None,
+        }
+    }
+
+    /// Loads the DJ library saved at `path` and saves there from now on. A missing file starts
+    /// an empty library; a damaged one is kept aside (renamed `.damaged`) and reported.
+    pub fn open_library(&mut self, path: std::path::PathBuf) -> std::result::Result<(), String> {
+        let r = match library_store::load(&path) {
+            Ok(Some(lib)) => {
+                self.library = lib;
+                Ok(())
+            }
+            Ok(None) => Ok(()),
+            Err(e) => {
+                library_store::set_aside(&path);
+                Err(e)
+            }
+        };
+        self.library_path = Some(path);
+        r
+    }
+
+    /// Hands over a read of the Music playlist `source` made off the UI thread
+    /// ([`library::apple_music::read_playlist`]): the next `library.sync` of that playlist uses it.
+    pub fn offer_library(&mut self, source: &str, read: std::result::Result<Vec<library::Track>, String>) {
+        self.library_offer = Some((source.to_string(), read));
+    }
+
+    fn take_library_offer(&mut self, source: &str) -> Option<std::result::Result<Vec<library::Track>, String>> {
+        match self.library_offer.take() {
+            Some((s, r)) if s == source => Some(r),
+            other => {
+                self.library_offer = other;
+                None
+            }
         }
     }
 

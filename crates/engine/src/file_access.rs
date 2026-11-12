@@ -524,9 +524,10 @@ mod tests {
     /// the file system itself would bypass them, so none may: every file under `src/` except
     /// `io.rs`, this module and the test files. Audio is decoded into the session when it enters
     /// it (import, open, sampler load), so playback and bounce read nothing from disk and need no
-    /// check of their own. Plug-in scans live in the host crates. The one engine module that reads
-    /// and writes a fixed folder is `autosave.rs`: crash-recovery copies in the app's own data
-    /// folder, which no command names, so it is skipped too.
+    /// check of their own. Plug-in scans live in the host crates. The engine modules that read and
+    /// write a fixed place of the app's own, which no command names, are skipped too:
+    /// `autosave.rs` (crash-recovery copies in the app's data folder) and `library_store.rs` (the
+    /// DJ library's file in the settings folder).
     #[test]
     fn commands_do_not_touch_the_file_system_themselves() {
         fn walk(dir: &Path, files: &mut Vec<PathBuf>) {
@@ -546,9 +547,11 @@ mod tests {
         let mut offenders = vec![];
         for path in files {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            // `io` and this module are the checked gateway; `autosave` writes the app's own
-            // recovery folder; `tests*.rs` are test-only modules.
-            if path.parent() == Some(src.as_path()) && matches!(name, "io.rs" | "file_access.rs" | "autosave.rs") || name.starts_with("tests") {
+            // `io` and this module are the checked gateway; `autosave` and `library_store` write
+            // the app's own recovery folder and library file; `tests*.rs` are test-only modules.
+            if path.parent() == Some(src.as_path()) && matches!(name, "io.rs" | "file_access.rs" | "autosave.rs" | "library_store.rs")
+                || name.starts_with("tests")
+            {
                 continue;
             }
             let text = std::fs::read_to_string(&path).unwrap();
