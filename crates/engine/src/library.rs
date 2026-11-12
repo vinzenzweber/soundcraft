@@ -6,6 +6,7 @@
 //! only ever read.
 
 pub mod apple_music;
+pub mod rekordbox;
 pub mod search;
 
 use search::{Column, Query};
@@ -41,6 +42,72 @@ pub struct Track {
     pub seconds: u32,
     /// The audio file, when the Music app knows it.
     pub path: Option<String>,
+    /// What a rekordbox export says about this track; it wins over the Music app's BPM and key.
+    pub rb: Option<RbInfo>,
+}
+
+/// A cue point from rekordbox: a hot cue (`hot`: its pad) or a memory cue, maybe a loop.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Cue {
+    pub name: String,
+    /// Seconds from the start of the file.
+    pub start: f64,
+    pub end: Option<f64>,
+    pub hot: Option<u8>,
+    pub colour: Option<[u8; 3]>,
+}
+
+/// A track's data from the last rekordbox import.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RbInfo {
+    pub bpm: Option<u16>,
+    pub key: Option<String>,
+    /// 0–5 stars.
+    pub rating: u8,
+    pub colour: Option<[u8; 3]>,
+    pub comment: String,
+    pub play_count: u32,
+    pub cues: Vec<Cue>,
+}
+
+/// Tracks only rekordbox knows have ids starting with this, then their file path.
+pub const REKORDBOX_ID: &str = "rb:";
+
+impl Track {
+    /// The BPM shown: rekordbox's, else the Music app's.
+    pub fn bpm(&self) -> Option<u16> {
+        self.rb.as_ref().and_then(|r| r.bpm).or(self.bpm)
+    }
+
+    /// The key shown: rekordbox's, else the Music app's.
+    pub fn key(&self) -> Option<&str> {
+        self.rb.as_ref().and_then(|r| r.key.as_deref()).or(self.key.as_deref())
+    }
+
+    pub fn rating(&self) -> u8 {
+        self.rb.as_ref().map_or(0, |r| r.rating)
+    }
+
+    pub fn comment(&self) -> &str {
+        self.rb.as_ref().map_or("", |r| r.comment.as_str())
+    }
+
+    pub fn colour(&self) -> Option<[u8; 3]> {
+        self.rb.as_ref().and_then(|r| r.colour)
+    }
+
+    /// Whether only a rekordbox export knows this track (it is not in the Music playlist).
+    pub fn from_rekordbox_only(&self) -> bool {
+        self.id.starts_with(REKORDBOX_ID)
+    }
+}
+
+/// A file path for matching: Unicode NFC (macOS paths may come decomposed) and lower case.
+pub fn path_key(p: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    p.nfc().collect::<String>().to_lowercase()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,9 +141,29 @@ pub struct Library {
     pub tracks: Vec<Track>,
     pub nodes: Vec<Node>,
     next_id: u64,
+    /// The top-level folder the last rekordbox import made; the next import replaces it.
+    pub rekordbox_root: Option<u64>,
+    /// Seconds since 1970 of the last rekordbox import.
+    pub rekordbox_at: Option<u64>,
     /// Bumped on every saved change, so views can cache what they list.
     #[serde(skip)]
     pub rev: u64,
+}
+
+/// What a rekordbox import did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct ImportReport {
+    pub folders: usize,
+    pub playlists: usize,
+    pub entries: usize,
+    /// Export tracks found in the Music playlist.
+    pub matched: usize,
+    /// Export tracks not in the Music playlist, added from their files.
+    pub added: usize,
+    /// Export tracks with no file, left out.
+    pub missing: usize,
+    /// Folders and playlists past the library's limits, left out.
+    pub skipped: usize,
 }
 
 /// What a sync changed.
@@ -303,14 +390,178 @@ impl Library {
     /// Replaces the tracks with a fresh read of the source. Playlists keep their entries; an
     /// entry whose track left the source stays in the playlist and shows again if it returns.
     pub fn replace_tracks(&mut self, source: &str, mut tracks: Vec<Track>, now: u64) -> SyncReport {
+        use std::collections::{HashMap, HashSet};
         tracks.truncate(MAX_TRACKS);
-        let old: std::collections::HashSet<&str> = self.tracks.iter().map(|t| t.id.as_str()).collect();
-        let new: std::collections::HashSet<&str> = tracks.iter().map(|t| t.id.as_str()).collect();
-        let report = SyncReport { tracks: tracks.len(), added: new.difference(&old).count(), removed: old.difference(&new).count() };
+        let report = {
+            let old: HashSet<&str> = self.tracks.iter().filter(|t| !t.from_rekordbox_only()).map(|t| t.id.as_str()).collect();
+            let new: HashSet<&str> = tracks.iter().map(|t| t.id.as_str()).collect();
+            SyncReport { tracks: tracks.len(), added: new.difference(&old).count(), removed: old.difference(&new).count() }
+        };
+        // Keep what rekordbox said about each track.
+        let old_rb: HashMap<String, RbInfo> = self.tracks.iter().filter_map(|t| t.rb.clone().map(|r| (t.id.clone(), r))).collect();
+        let by_path: HashMap<String, usize> = tracks.iter().enumerate().filter_map(|(i, t)| t.path.as_deref().map(|p| (path_key(p), i))).collect();
+        for t in &mut tracks {
+            if t.rb.is_none() {
+                t.rb = old_rb.get(&t.id).cloned();
+            }
+        }
+        // A rekordbox-only track now in the Music playlist becomes that track in every playlist.
+        let mut renamed: HashMap<String, String> = HashMap::new();
+        let mut keep = Vec::new();
+        for old in std::mem::take(&mut self.tracks).into_iter().filter(Track::from_rekordbox_only) {
+            match old.path.as_deref().and_then(|p| by_path.get(&path_key(p))).and_then(|i| tracks.get_mut(*i)) {
+                Some(t) => {
+                    if t.rb.is_none() {
+                        t.rb = old.rb.clone();
+                    }
+                    renamed.insert(old.id.clone(), t.id.clone());
+                }
+                None => keep.push(old),
+            }
+        }
+        if !renamed.is_empty() {
+            for n in &mut self.nodes {
+                for id in &mut n.tracks {
+                    if let Some(new) = renamed.get(id) {
+                        id.clone_from(new);
+                    }
+                }
+            }
+        }
+        tracks.extend(keep.into_iter().take(MAX_TRACKS.saturating_sub(tracks.len())));
         self.tracks = tracks;
         self.source = source.chars().take(MAX_TEXT_CHARS).collect();
         self.synced_at = Some(now);
         report
+    }
+
+    /// Brings in a rekordbox export: each export track is matched to a library track by its file
+    /// (else by title, artist and length) and takes rekordbox's key, BPM, rating, colour, comment,
+    /// play count and cues; tracks only rekordbox has are added from their files. The export's
+    /// folders and playlists, in its order, replace the previous import's under a top-level
+    /// "rekordbox" folder. Playlists moved out of that folder are the user's and stay.
+    pub fn import_rekordbox(&mut self, x: rekordbox::Export, now: u64) -> ImportReport {
+        use std::collections::{HashMap, HashSet};
+        let mut report = ImportReport::default();
+        for t in &mut self.tracks {
+            t.rb = None;
+        }
+        let mut by_path: HashMap<String, usize> = HashMap::new();
+        let mut by_meta: HashMap<(String, String), usize> = HashMap::new();
+        for (i, t) in self.tracks.iter().enumerate() {
+            if let Some(p) = &t.path {
+                by_path.entry(path_key(p)).or_insert(i);
+            }
+            by_meta.entry((t.title.to_lowercase(), t.artist.to_lowercase())).or_insert(i);
+        }
+        let mut ids: HashMap<String, String> = HashMap::new();
+        let mut paths: HashMap<String, String> = HashMap::new();
+        for rt in x.tracks {
+            let info = RbInfo {
+                bpm: rt.bpm,
+                key: rt.key.clone(),
+                rating: rt.rating,
+                colour: rt.colour,
+                comment: rt.comment.clone(),
+                play_count: rt.play_count,
+                cues: rt.cues.clone(),
+            };
+            let pkey = rt.path.as_deref().map(path_key);
+            let found = pkey.as_ref().and_then(|p| by_path.get(p).copied()).or_else(|| {
+                by_meta
+                    .get(&(rt.title.to_lowercase(), rt.artist.to_lowercase()))
+                    .copied()
+                    .filter(|i| self.tracks.get(*i).is_some_and(|t| t.seconds.abs_diff(rt.seconds) <= 2))
+            });
+            let id = match (found, &rt.path) {
+                (Some(i), _) => match self.tracks.get_mut(i) {
+                    Some(t) => {
+                        t.rb = Some(info);
+                        report.matched += 1;
+                        t.id.clone()
+                    }
+                    None => continue,
+                },
+                (None, Some(path)) if self.tracks.len() < MAX_TRACKS => {
+                    let id = format!("{REKORDBOX_ID}{path}");
+                    if let Some(t) = self.tracks.iter_mut().find(|t| t.id == id) {
+                        t.rb = Some(info);
+                    } else {
+                        self.tracks.push(Track {
+                            id: id.clone(),
+                            title: rt.title.clone(),
+                            artist: rt.artist.clone(),
+                            bpm: None,
+                            key: None,
+                            genre: rt.genre.clone(),
+                            seconds: rt.seconds,
+                            path: Some(path.clone()),
+                            rb: Some(info),
+                        });
+                        by_path.insert(path_key(path), self.tracks.len() - 1);
+                    }
+                    report.added += 1;
+                    id
+                }
+                _ => {
+                    report.missing += 1;
+                    continue;
+                }
+            };
+            if let Some(p) = pkey {
+                paths.insert(p, id.clone());
+            }
+            ids.insert(rt.id, id);
+        }
+        // The tree: replace the previous import's folder.
+        if let Some(old) = self.rekordbox_root.take()
+            && self.node(old).is_some_and(|n| n.parent.is_none())
+        {
+            let _ = self.remove(old);
+        }
+        match self.add(NodeKind::Folder, "rekordbox", None) {
+            Ok(root) => {
+                self.rekordbox_root = Some(root);
+                self.add_rb_nodes(&x.nodes, root, &ids, &paths, &mut report);
+            }
+            Err(_) => report.skipped += 1,
+        }
+        // Rekordbox-only tracks this export no longer lists, and no playlist holds, go.
+        let listed: HashSet<&str> = ids.values().map(String::as_str).collect();
+        let held: HashSet<String> = self.nodes.iter().flat_map(|n| n.tracks.iter().cloned()).collect();
+        self.tracks.retain(|t| !t.from_rekordbox_only() || listed.contains(t.id.as_str()) || held.contains(&t.id));
+        self.rekordbox_at = Some(now);
+        report
+    }
+
+    fn add_rb_nodes(
+        &mut self,
+        nodes: &[rekordbox::RbNode],
+        parent: u64,
+        ids: &std::collections::HashMap<String, String>,
+        paths: &std::collections::HashMap<String, String>,
+        report: &mut ImportReport,
+    ) {
+        for n in nodes {
+            match n {
+                rekordbox::RbNode::Folder { name, children } => match self.add(NodeKind::Folder, name, Some(parent)) {
+                    Ok(id) => {
+                        report.folders += 1;
+                        self.add_rb_nodes(children, id, ids, paths, report);
+                    }
+                    Err(_) => report.skipped += 1,
+                },
+                rekordbox::RbNode::Playlist { name, entries, by_location } => match self.add(NodeKind::Playlist, name, Some(parent)) {
+                    Ok(id) => {
+                        report.playlists += 1;
+                        let tracks: Vec<String> =
+                            entries.iter().filter_map(|e| if *by_location { paths.get(&path_key(e)) } else { ids.get(e) }).cloned().collect();
+                        report.entries += self.add_tracks(id, &tracks, None).unwrap_or(0);
+                    }
+                    Err(_) => report.skipped += 1,
+                },
+            }
+        }
     }
 
     /// A saved library from its file's bytes ([`crate::library_store`] reads the file). Damaged

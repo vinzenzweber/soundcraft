@@ -29,7 +29,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Search DJ Library",
             [],
             None,
-            "{query?: text, playlist?: id (a folder searches its playlists; omit for the whole library), columns?: [title, artist, bpm, key, genre, time] (the shown columns plain words search; default title, artist, bpm, key), offset?: 0, limit?: 200 (max 10000)} — words match any shown column; 120-124 is a BPM range, 8A a key, column:value one column (bpm:>125, time:<4:00, genre:afro), -word leaves out. Returns total, matched, how each word was read, and the tracks: id, position in the playlist, title, artist, bpm, key, genre, time, seconds, path, playlists",
+            "{query?: text, playlist?: id (a folder searches its playlists; omit for the whole library), columns?: [title, artist, bpm, key, genre, time, rating, comment] (the shown columns plain words search; default title, artist, bpm, key), offset?: 0, limit?: 200 (max 10000)} — words match any shown column; 120-124 is a BPM range, 8A a key, column:value one column (bpm:>125, time:<4:00, genre:afro, rating:>3), -word leaves out. Returns total, matched, how each word was read, and the tracks: id, position in the playlist, title, artist, bpm, key, genre, time, seconds, path, playlists",
             super::always,
             search
         ),
@@ -97,6 +97,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{playlist: id, from: position, to: position} — moves one entry",
             super::always,
             reorder
+        ),
+        cmd!(
+            noundo "library.import_rekordbox",
+            "Import from rekordbox",
+            [],
+            None,
+            "{path: a rekordbox XML export (rekordbox: File › Export Collection in xml format)} — matches its tracks to the library by file (else title, artist and length), keeps rekordbox's key, BPM, rating, colour, comment, play count and cues with each, adds tracks only rekordbox has, and puts its folders and playlists, in order, in a top-level \"rekordbox\" folder that replaces the previous import's. Read-only for rekordbox. Returns folder (its id), folders, playlists, entries, matched, added, missing, skipped",
+            super::always,
+            import_rekordbox
         ),
         cmd!(
             "library.import",
@@ -179,7 +188,11 @@ pub fn columns_param(id: &str, p: &Value) -> Result<Vec<Column>> {
     let a = v.as_array().ok_or_else(|| bad(id, "`columns` must be a list"))?;
     a.iter()
         .take(Column::ALL.len() * 2)
-        .map(|c| c.as_str().and_then(Column::parse).ok_or_else(|| bad(id, format!("unknown column {c} (title, artist, bpm, key, genre, time)"))))
+        .map(|c| {
+            c.as_str()
+                .and_then(Column::parse)
+                .ok_or_else(|| bad(id, format!("unknown column {c} (title, artist, bpm, key, genre, time, rating, comment)")))
+        })
         .collect()
 }
 
@@ -189,8 +202,14 @@ pub fn track_json(t: &Track, position: usize, lists: Option<&Vec<&str>>) -> Valu
         "position": position,
         "title": t.title,
         "artist": t.artist,
-        "bpm": t.bpm,
-        "key": t.key,
+        "bpm": t.bpm(),
+        "key": t.key(),
+        "rating": t.rating(),
+        "comment": t.comment(),
+        "colour": t.colour().map(|[r, g, b]| format!("#{r:02x}{g:02x}{b:02x}")),
+        "play_count": t.rb.as_ref().map_or(0, |r| r.play_count),
+        "cues": t.rb.as_ref().map_or(0, |r| r.cues.len()),
+        "rekordbox_only": t.from_rekordbox_only(),
         "genre": t.genre,
         "time": format_time(t.seconds),
         "seconds": t.seconds,
@@ -305,6 +324,25 @@ fn reorder(e: &mut Engine, p: &Value) -> Result<Value> {
     Ok(json!({}))
 }
 
+fn import_rekordbox(e: &mut Engine, p: &Value) -> Result<Value> {
+    const ID: &str = "library.import_rekordbox";
+    let path = str_param(p, "path").ok_or_else(|| bad(ID, "`path` required"))?;
+    let bytes = crate::io::read_file(path)?;
+    let export = library::rekordbox::parse(&bytes).map_err(err(ID))?;
+    let r = e.library.import_rekordbox(export, now());
+    save(e);
+    Ok(json!({
+        "folder": e.library.rekordbox_root,
+        "folders": r.folders,
+        "playlists": r.playlists,
+        "entries": r.entries,
+        "matched": r.matched,
+        "added": r.added,
+        "missing": r.missing,
+        "skipped": r.skipped,
+    }))
+}
+
 fn import(e: &mut Engine, p: &Value) -> Result<Value> {
     const ID: &str = "library.import";
     let id = str_param(p, "track").ok_or_else(|| bad(ID, "`track` required"))?;
@@ -334,6 +372,7 @@ mod tests {
             genre: genre.into(),
             seconds: 300,
             path: None,
+            rb: None,
         };
         e.offer_library(
             "DJ",
@@ -392,6 +431,65 @@ mod tests {
         }
         let r = e.execute("library.search", &json!({"limit": u64::MAX, "offset": u64::MAX})).unwrap_or_default();
         assert_eq!(r["tracks"].as_array().map(Vec::len), Some(0));
+    }
+
+    #[test]
+    fn a_rekordbox_export_brings_its_playlists_and_keys() {
+        let dir = std::env::temp_dir().join(format!("soundcraft-rekordbox-cmd-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let xml = dir.join("rekordbox.xml");
+        let mut e = Engine::default();
+        let music = |id: &str, title: &str, path: &str| Track {
+            id: id.into(),
+            title: title.into(),
+            seconds: 300,
+            path: Some(path.into()),
+            bpm: Some(100),
+            ..Track::default()
+        };
+        // The Music app gives a decomposed "ñ"; the export a composed one.
+        e.offer_library("DJ", Ok(vec![music("m1", "Siren", "/M/Siren.mp3"), music("m2", "Cana", "/M/Can\u{0303}a.mp3")]));
+        assert!(e.execute("library.sync", &json!({"playlist": "DJ"})).is_ok());
+        let body = r#"<DJ_PLAYLISTS Version="1.0.0"><COLLECTION>
+<TRACK TrackID="1" Name="Siren" Artist="Rancido" AverageBpm="120.00" Tonality="Dm" Rating="255" Location="file://localhost/M/Siren.mp3"><POSITION_MARK Start="1.5" Num="0"/></TRACK>
+<TRACK TrackID="2" Name="Cana" AverageBpm="96.00" Tonality="4A" Location="file://localhost/M/Ca%C3%B1a.mp3"/>
+<TRACK TrackID="3" Name="Only Here" Artist="X" AverageBpm="128.00" Location="file://localhost/Other/only.mp3"/>
+<TRACK TrackID="4" Name="No File"/>
+</COLLECTION><PLAYLISTS><NODE Type="0" Name="ROOT">
+<NODE Type="0" Name="la caña"><NODE Type="1" Name="peak 3.10" KeyType="0"><TRACK Key="3"/><TRACK Key="1"/><TRACK Key="4"/></NODE></NODE>
+</NODE></PLAYLISTS></DJ_PLAYLISTS>"#;
+        let _ = std::fs::write(&xml, body);
+        let r = e.execute("library.import_rekordbox", &json!({"path": xml.to_string_lossy()})).unwrap_or_default();
+        assert_eq!(
+            (r["folders"].as_u64(), r["playlists"].as_u64(), r["matched"].as_u64(), r["added"].as_u64(), r["missing"].as_u64()),
+            (Some(1), Some(1), Some(2), Some(1), Some(1)),
+            "{r}"
+        );
+        let siren = e.library.track("m1").cloned().unwrap_or_default();
+        assert_eq!((siren.bpm(), siren.key(), siren.rating()), (Some(120), Some("7A"), 5));
+        assert_eq!(e.library.track("m2").and_then(|t| t.key().map(str::to_string)).as_deref(), Some("4A"), "paths match across Unicode forms");
+        let tree = e.execute("library.tree", &json!({})).unwrap_or_default();
+        let names: Vec<&str> = tree["nodes"].as_array().map(|a| a.iter().filter_map(|n| n["name"].as_str()).collect()).unwrap_or_default();
+        assert_eq!(names, ["rekordbox", "la caña", "peak 3.10"]);
+        let list = tree["nodes"][2]["id"].as_u64();
+        let rows = e.execute("library.search", &json!({"playlist": list})).unwrap_or_default();
+        let titles: Vec<&str> = rows["tracks"].as_array().map(|a| a.iter().filter_map(|t| t["title"].as_str()).collect()).unwrap_or_default();
+        assert_eq!(titles, ["Only Here", "Siren"], "rekordbox's order; the track without a file is left out");
+        // Searching uses rekordbox's data.
+        let hits = e.execute("library.search", &json!({"query": "rating:5 7a"})).unwrap_or_default();
+        assert_eq!(hits["matched"], 1);
+        // A new Music read keeps it, and importing again replaces the folder rather than adding one.
+        e.offer_library("DJ", Ok(vec![music("m1", "Siren", "/M/Siren.mp3"), music("m3", "Only Here", "/Other/only.mp3")]));
+        assert!(e.execute("library.sync", &json!({"playlist": "DJ"})).is_ok());
+        assert_eq!(e.library.track("m1").and_then(|t| t.key().map(str::to_string)).as_deref(), Some("7A"), "a sync keeps rekordbox's key");
+        let rows = e.execute("library.search", &json!({"playlist": list})).unwrap_or_default();
+        assert_eq!(rows["tracks"][0]["id"], "m3", "a rekordbox-only track now in Music is the Music track in playlists");
+        assert!(e.execute("library.import_rekordbox", &json!({"path": xml.to_string_lossy()})).is_ok());
+        let tree = e.execute("library.tree", &json!({})).unwrap_or_default();
+        assert_eq!(tree["nodes"].as_array().map(Vec::len), Some(3));
+        let _ = std::fs::write(&xml, "<not rekordbox/>");
+        assert!(e.execute("library.import_rekordbox", &json!({"path": xml.to_string_lossy()})).is_err());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

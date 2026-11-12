@@ -23,10 +23,13 @@ pub enum Column {
     Key,
     Genre,
     Time,
+    Rating,
+    Comment,
 }
 
 impl Column {
-    pub const ALL: [Column; 6] = [Column::Title, Column::Artist, Column::Bpm, Column::Key, Column::Genre, Column::Time];
+    pub const ALL: [Column; 8] =
+        [Column::Title, Column::Artist, Column::Bpm, Column::Key, Column::Genre, Column::Time, Column::Rating, Column::Comment];
     /// The columns shown until the user picks others.
     pub const DEFAULT: [Column; 4] = [Column::Title, Column::Artist, Column::Bpm, Column::Key];
 
@@ -38,6 +41,8 @@ impl Column {
             Column::Key => "key",
             Column::Genre => "genre",
             Column::Time => "time",
+            Column::Rating => "rating",
+            Column::Comment => "comment",
         }
     }
 
@@ -49,6 +54,8 @@ impl Column {
             Column::Key => "Key",
             Column::Genre => "Genre",
             Column::Time => "Time",
+            Column::Rating => "Rating",
+            Column::Comment => "Comment",
         }
     }
 
@@ -61,10 +68,15 @@ impl Column {
         match self {
             Column::Title => t.title.clone(),
             Column::Artist => t.artist.clone(),
-            Column::Bpm => t.bpm.map(|b| b.to_string()).unwrap_or_default(),
-            Column::Key => t.key.clone().unwrap_or_default(),
+            Column::Bpm => t.bpm().map(|b| b.to_string()).unwrap_or_default(),
+            Column::Key => t.key().unwrap_or_default().to_string(),
             Column::Genre => t.genre.clone(),
             Column::Time => format_time(t.seconds),
+            Column::Rating => match t.rating() {
+                0 => String::new(),
+                r => r.to_string(),
+            },
+            Column::Comment => t.comment().to_string(),
         }
     }
 }
@@ -147,6 +159,8 @@ pub enum Term {
     Key { key: String, auto: bool },
     /// A length or bound, in seconds.
     Time { cmp: Cmp, n: u32 },
+    /// Stars (0–5), or a bound.
+    Rating { cmp: Cmp, n: u32 },
 }
 
 /// A query word, maybe negated.
@@ -205,6 +219,7 @@ impl Query {
                 Column::Bpm => Cmp::parse(value, bpm_number).map(|(cmp, n)| Term::Bpm { cmp, n, auto: None }),
                 Column::Key => Some(wheel_key(value).map_or_else(|| Term::In(Column::Key, value.to_string()), |key| Term::Key { key, auto: false })),
                 Column::Time => Cmp::parse(value, parse_time).map(|(cmp, n)| Term::Time { cmp, n }),
+                Column::Rating => Cmp::parse(value, |s| s.parse::<u32>().ok().filter(|n| *n <= 5)).map(|(cmp, n)| Term::Rating { cmp, n }),
                 _ => None,
             }
             .unwrap_or_else(|| Term::In(col, value.to_string()));
@@ -240,6 +255,7 @@ impl Query {
                     Term::Bpm { cmp, n, .. } => format!("BPM {}", cmp.describe(*n, |v| v.to_string())),
                     Term::Key { key, .. } => format!("Key {key}"),
                     Term::Time { cmp, n } => format!("Time {}", cmp.describe(*n, format_time)),
+                    Term::Rating { cmp, n } => format!("Rating {}", cmp.describe(*n, |v| format!("{v}★"))),
                 };
                 if w.not { format!("not {s}") } else { s }
             })
@@ -273,14 +289,15 @@ impl Term {
             Term::Any(s) => any_shown(t, shown, s),
             Term::In(c, s) => contains(&c.text(t), s),
             Term::Bpm { cmp, n, auto } => {
-                let by_bpm = (auto.is_none() || shown.contains(&Column::Bpm)) && t.bpm.is_some_and(|b| cmp.holds(u32::from(b), *n));
+                let by_bpm = (auto.is_none() || shown.contains(&Column::Bpm)) && t.bpm().is_some_and(|b| cmp.holds(u32::from(b), *n));
                 by_bpm || auto.as_ref().is_some_and(|s| any_shown(t, shown, s))
             }
             Term::Key { key, auto } => {
-                let by_key = (!auto || shown.contains(&Column::Key)) && t.key.as_deref().is_some_and(|k| k.eq_ignore_ascii_case(key));
+                let by_key = (!auto || shown.contains(&Column::Key)) && t.key().is_some_and(|k| k.eq_ignore_ascii_case(key));
                 by_key || (*auto && any_shown(t, shown, &key.to_lowercase()))
             }
             Term::Time { cmp, n } => cmp.holds(t.seconds, *n),
+            Term::Rating { cmp, n } => cmp.holds(u32::from(t.rating()), *n),
         }
     }
 }
@@ -299,6 +316,7 @@ mod tests {
             genre: genre.into(),
             seconds,
             path: None,
+            rb: None,
         }
     }
 
