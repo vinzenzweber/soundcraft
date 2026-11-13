@@ -417,6 +417,36 @@ impl Library {
         Ok(())
     }
 
+    /// How many tracks each playlist and folder lists (what `listing` would return), all in one
+    /// pass: a folder counts each track of the playlists inside it once.
+    pub fn counts(&self) -> std::collections::HashMap<u64, usize> {
+        use std::collections::{HashMap, HashSet};
+        let known: HashSet<&str> = self.tracks.iter().map(|t| t.id.as_str()).collect();
+        let parents: HashMap<u64, Option<u64>> = self.nodes.iter().map(|n| (n.id, n.parent)).collect();
+        let mut counts: HashMap<u64, usize> = HashMap::with_capacity(self.nodes.len());
+        let mut in_folder: HashMap<u64, HashSet<&str>> = HashMap::new();
+        for n in &self.nodes {
+            if n.kind == NodeKind::Folder {
+                counts.entry(n.id).or_insert(0);
+                continue;
+            }
+            let present: Vec<&str> = n.tracks.iter().map(String::as_str).filter(|t| known.contains(t)).collect();
+            counts.insert(n.id, present.len());
+            let mut at = n.parent;
+            for _ in 0..=MAX_DEPTH {
+                let Some(f) = at else { break };
+                in_folder.entry(f).or_default().extend(present.iter().copied());
+                at = parents.get(&f).copied().flatten();
+            }
+        }
+        for (f, set) in in_folder {
+            if self.node(f).is_some_and(|n| n.kind == NodeKind::Folder) {
+                counts.insert(f, set.len());
+            }
+        }
+        counts
+    }
+
     /// The tracks of a playlist in its order, or every track for `None`. Entries whose track
     /// left the source are skipped. Each comes with its position in the playlist.
     pub fn listing(&self, playlist: Option<u64>) -> Result<Vec<(usize, &Track)>, String> {
@@ -426,9 +456,10 @@ impl Library {
                 let n = self.node(id).ok_or_else(|| format!("no playlist {id}"))?;
                 if n.kind == NodeKind::Folder {
                     // A folder lists the tracks of every playlist in it, each once.
+                    let index: std::collections::HashMap<&str, &Track> = self.tracks.iter().map(|t| (t.id.as_str(), t)).collect();
                     let mut seen = std::collections::HashSet::new();
                     let ids = self.nodes.iter().filter(|m| m.kind == NodeKind::Playlist && self.within(m.id, id)).flat_map(|m| &m.tracks);
-                    return Ok(ids.filter(|t| seen.insert(t.as_str())).filter_map(|t| self.track(t)).enumerate().collect());
+                    return Ok(ids.filter(|t| seen.insert(t.as_str())).filter_map(|t| index.get(t.as_str()).copied()).enumerate().collect());
                 }
                 let index: std::collections::HashMap<&str, &Track> = self.tracks.iter().map(|t| (t.id.as_str(), t)).collect();
                 Ok(n.tracks.iter().enumerate().filter_map(|(i, t)| index.get(t.as_str()).map(|t| (i, *t))).collect())
@@ -703,6 +734,26 @@ mod tests {
         assert!(l.move_to(cana, Some(latin)).is_err(), "a folder cannot move into itself");
         assert_eq!(l.remove(cana), Ok(3));
         assert!(l.nodes.is_empty());
+    }
+
+    #[test]
+    fn counts_match_the_listings() {
+        let mut l = lib();
+        let top = l.add(NodeKind::Folder, "rekordbox", None).unwrap_or(0);
+        let inner = l.add(NodeKind::Folder, "LATIN", Some(top)).unwrap_or(0);
+        let empty = l.add(NodeKind::Folder, "empty", None).unwrap_or(0);
+        let p1 = l.add(NodeKind::Playlist, "salsa", Some(inner)).unwrap_or(0);
+        let p2 = l.add(NodeKind::Playlist, "warm up", Some(top)).unwrap_or(0);
+        let p3 = l.add(NodeKind::Playlist, "loose", None).unwrap_or(0);
+        l.add_tracks(p1, &["a".into(), "b".into(), "a".into()], None).unwrap_or_default();
+        l.add_tracks(p2, &["b".into(), "c".into()], None).unwrap_or_default();
+        l.add_tracks(p3, &["c".into()], None).unwrap_or_default();
+        l.replace_tracks("DJ", vec![track("a"), track("b")], 2);
+        let counts = l.counts();
+        for n in [top, inner, empty, p1, p2, p3] {
+            assert_eq!(counts.get(&n).copied(), Some(l.listing(Some(n)).map_or(0, |v| v.len())), "node {n}");
+        }
+        assert_eq!((counts.get(&top), counts.get(&p1), counts.get(&p3)), (Some(&2), Some(&3), Some(&0)));
     }
 
     #[test]

@@ -8,7 +8,7 @@ use super::{Align2, Color32, Rect, Sense, SoundApp, Stroke, Tokens, Ui, bold, js
 use egui::text::{LayoutJob, TextFormat};
 use soundcraft_engine::library::search::{Column, Query, format_time};
 use soundcraft_engine::library::{self, NodeKind, Track};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 const ROW_H: f32 = 20.0;
@@ -66,6 +66,9 @@ pub struct LibraryPanel {
     renaming: Option<(u64, String)>,
     selected_row: Option<usize>,
     cache: Option<(Key, Arc<Vec<Row>>, Vec<String>, usize)>,
+    /// The tree's track counts and the recent count, keyed by (library revision, track count,
+    /// day). Counting walks every playlist, far too slow to repeat each frame.
+    counts: Option<((u64, usize, u64), Arc<HashMap<u64, usize>>, usize)>,
     #[cfg(not(target_arch = "wasm32"))]
     sync: Option<std::sync::mpsc::Receiver<(String, Result<Vec<Track>, String>)>>,
     tried_first_sync: bool,
@@ -206,6 +209,7 @@ fn tree_panel(app: &mut SoundApp, ui: &mut Ui) {
         });
     });
     ui.add_space(4.0);
+    let (counts, recent) = tree_counts(app);
     let nodes: Vec<(u64, String, NodeKind, usize, usize, bool)> = {
         let l = &app.engine.library;
         let mut hidden: HashSet<u64> = HashSet::new();
@@ -216,7 +220,7 @@ fn tree_panel(app: &mut SoundApp, ui: &mut Ui) {
                     hidden.insert(n.id);
                     return None;
                 }
-                let count = l.listing(Some(n.id)).map_or(0, |v| v.len());
+                let count = counts.get(&n.id).copied().unwrap_or(0);
                 Some((n.id, n.name.clone(), n.kind, l.depth(n.id), count, app.library.collapsed.contains(&n.id)))
             })
             .collect()
@@ -224,8 +228,6 @@ fn tree_panel(app: &mut SoundApp, ui: &mut Ui) {
     let total = app.engine.library.tracks.len();
     egui::ScrollArea::vertical().id_salt("library-tree-scroll").auto_shrink([false, false]).max_height(ui.available_height() - 50.0).show(ui, |ui| {
         tree_row(app, ui, None, "All tracks", None, 0, total, false);
-        let since = now_secs().saturating_sub(RECENT_DAYS * 86_400);
-        let recent = app.engine.library.tracks.iter().filter(|t| t.added().is_some_and(|a| a >= since)).count();
         tree_row(app, ui, Some(RECENT), "Added in the last 30 days", None, 0, recent, false);
         for (id, name, kind, depth, count, collapsed) in nodes {
             tree_row(app, ui, Some(id), &name, Some(kind), depth, count, collapsed);
@@ -274,6 +276,24 @@ fn tree_panel(app: &mut SoundApp, ui: &mut Ui) {
     {
         import_rekordbox(app);
     }
+}
+
+/// Each playlist's and folder's track count, and how many tracks were added recently, counted
+/// again only when the library changes (or the day does).
+fn tree_counts(app: &mut SoundApp) -> (Arc<HashMap<u64, usize>>, usize) {
+    let l = &app.engine.library;
+    let now = now_secs();
+    let key = (l.rev, l.tracks.len(), now / 86_400);
+    if let Some((k, counts, recent)) = &app.library.counts
+        && *k == key
+    {
+        return (counts.clone(), *recent);
+    }
+    let since = now.saturating_sub(RECENT_DAYS * 86_400);
+    let recent = l.tracks.iter().filter(|t| t.added().is_some_and(|a| a >= since)).count();
+    let counts = Arc::new(l.counts());
+    app.library.counts = Some((key, counts.clone(), recent));
+    (counts, recent)
 }
 
 /// Picks a rekordbox XML export and imports it.
