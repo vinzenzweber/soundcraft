@@ -25,11 +25,12 @@ pub enum Column {
     Time,
     Rating,
     Comment,
+    Added,
 }
 
 impl Column {
-    pub const ALL: [Column; 8] =
-        [Column::Title, Column::Artist, Column::Bpm, Column::Key, Column::Genre, Column::Time, Column::Rating, Column::Comment];
+    pub const ALL: [Column; 9] =
+        [Column::Title, Column::Artist, Column::Bpm, Column::Key, Column::Genre, Column::Time, Column::Rating, Column::Comment, Column::Added];
     /// The columns shown until the user picks others.
     pub const DEFAULT: [Column; 4] = [Column::Title, Column::Artist, Column::Bpm, Column::Key];
 
@@ -43,6 +44,7 @@ impl Column {
             Column::Time => "time",
             Column::Rating => "rating",
             Column::Comment => "comment",
+            Column::Added => "added",
         }
     }
 
@@ -56,6 +58,7 @@ impl Column {
             Column::Time => "Time",
             Column::Rating => "Rating",
             Column::Comment => "Comment",
+            Column::Added => "Date Added",
         }
     }
 
@@ -77,6 +80,7 @@ impl Column {
                 r => r.to_string(),
             },
             Column::Comment => t.comment().to_string(),
+            Column::Added => t.added().map(super::format_date).unwrap_or_default(),
         }
     }
 }
@@ -316,6 +320,7 @@ mod tests {
             genre: genre.into(),
             seconds,
             path: None,
+            added: None,
             rb: None,
         }
     }

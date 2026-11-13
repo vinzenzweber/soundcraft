@@ -30,6 +30,8 @@ pub struct RbTrack {
     /// The audio file, decoded from the export's `file://` location.
     pub path: Option<String>,
     pub cues: Vec<Cue>,
+    /// When it was added to rekordbox, in seconds since 1970.
+    pub added: Option<u64>,
 }
 
 /// A folder or playlist of the export.
@@ -167,6 +169,7 @@ fn track(a: &[(String, String)]) -> RbTrack {
         seconds: num(a, "TotalTime").map_or(0, |s| s.clamp(0.0, f64::from(u32::MAX)) as u32),
         path: location_path(get(a, "Location")),
         cues: Vec::new(),
+        added: super::parse_date(get(a, "DateAdded")),
     }
 }
 

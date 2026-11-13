@@ -35,8 +35,24 @@ struct Key {
     rev: u64,
     tracks: usize,
     playlist: Option<u64>,
+    recent: bool,
     query: String,
     columns: Vec<Column>,
+    sort: Option<(Column, bool)>,
+}
+
+/// The tree's "Added in the last 30 days" entry, selected like a playlist.
+pub const RECENT: u64 = u64::MAX;
+/// How far back "Added in the last 30 days" looks.
+const RECENT_DAYS: u64 = 30;
+
+fn now_secs() -> u64 {
+    web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// The sort the user picked by clicking a column title, if any.
+fn user_sort(app: &SoundApp) -> Option<(Column, bool)> {
+    app.ui.library_sort.as_deref().and_then(Column::parse).map(|c| (c, app.ui.library_sort_desc))
 }
 
 /// What the panel remembers between frames.
@@ -131,7 +147,7 @@ fn poll_sync(app: &mut SoundApp) {
 /// "synced 3 min ago".
 fn synced_label(at: Option<u64>) -> String {
     let Some(at) = at else { return "not synced yet".into() };
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let now = now_secs();
     let mins = now.saturating_sub(at) / 60;
     match mins {
         0 => "synced just now".into(),
@@ -208,6 +224,9 @@ fn tree_panel(app: &mut SoundApp, ui: &mut Ui) {
     let total = app.engine.library.tracks.len();
     egui::ScrollArea::vertical().id_salt("library-tree-scroll").auto_shrink([false, false]).max_height(ui.available_height() - 50.0).show(ui, |ui| {
         tree_row(app, ui, None, "All tracks", None, 0, total, false);
+        let since = now_secs().saturating_sub(RECENT_DAYS * 86_400);
+        let recent = app.engine.library.tracks.iter().filter(|t| t.added().is_some_and(|a| a >= since)).count();
+        tree_row(app, ui, Some(RECENT), "Added in the last 30 days", None, 0, recent, false);
         for (id, name, kind, depth, count, collapsed) in nodes {
             tree_row(app, ui, Some(id), &name, Some(kind), depth, count, collapsed);
         }
@@ -314,7 +333,9 @@ fn tree_row(app: &mut SoundApp, ui: &mut Ui, id: Option<u64>, name: &str, kind: 
     let t = Tokens::current();
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
     let selected = app.library.selected == id;
-    let drop_hover = id.is_some() && kind == Some(NodeKind::Playlist) && resp.dnd_hover_payload::<TrackDrag>().is_some();
+    // The recent list is not a folder or playlist: no renaming, menu or drops.
+    let node_id = id.filter(|i| *i != RECENT);
+    let drop_hover = node_id.is_some() && kind == Some(NodeKind::Playlist) && resp.dnd_hover_payload::<TrackDrag>().is_some();
     if selected {
         ui.painter().rect_filled(r, 0.0, t.row_selected);
     } else if drop_hover {
@@ -347,7 +368,7 @@ fn tree_row(app: &mut SoundApp, ui: &mut Ui, id: Option<u64>, name: &str, kind: 
         }
     }
     let text_x = x + 32.0;
-    if let Some(node) = id
+    if let Some(node) = node_id
         && app.library.renaming.as_ref().is_some_and(|(rid, _)| *rid == node)
     {
         let er = Rect::from_min_max(pos2(text_x - 2.0, r.min.y + 1.0), pos2(r.max.x - 6.0, r.max.y - 1.0));
@@ -380,7 +401,7 @@ fn tree_row(app: &mut SoundApp, ui: &mut Ui, id: Option<u64>, name: &str, kind: 
             if selected { fg } else { t.header_text },
         );
     }
-    if let Some(node) = id
+    if let Some(node) = node_id
         && let Some(drag) = resp.dnd_release_payload::<TrackDrag>()
         && kind == Some(NodeKind::Playlist)
     {
@@ -391,7 +412,7 @@ fn tree_row(app: &mut SoundApp, ui: &mut Ui, id: Option<u64>, name: &str, kind: 
     }
     if resp.clicked() {
         if kind == Some(NodeKind::Folder) && ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| p.x < x + 12.0) {
-            if let Some(node) = id
+            if let Some(node) = node_id
                 && !app.library.collapsed.remove(&node)
             {
                 app.library.collapsed.insert(node);
@@ -403,7 +424,7 @@ fn tree_row(app: &mut SoundApp, ui: &mut Ui, id: Option<u64>, name: &str, kind: 
         }
     }
     if resp.double_clicked()
-        && let Some(node) = id
+        && let Some(node) = node_id
     {
         if kind == Some(NodeKind::Folder) {
             if !app.library.collapsed.remove(&node) {
@@ -413,7 +434,7 @@ fn tree_row(app: &mut SoundApp, ui: &mut Ui, id: Option<u64>, name: &str, kind: 
             app.library.renaming = Some((node, name.to_string()));
         }
     }
-    if let Some(node) = id {
+    if let Some(node) = node_id {
         resp.context_menu(|ui| {
             if ui.button("Rename").clicked() {
                 app.library.renaming = Some((node, name.to_string()));
@@ -469,19 +490,27 @@ fn tree_row(app: &mut SoundApp, ui: &mut Ui, id: Option<u64>, name: &str, kind: 
 
 /// The rows for the current playlist/scope, query and columns, cached until something changes.
 fn rows(app: &mut SoundApp, columns: &[Column]) -> (Arc<Vec<Row>>, Vec<String>, usize) {
-    let playlist = if app.library.whole_library { None } else { app.library.selected };
+    let recent = !app.library.whole_library && app.library.selected == Some(RECENT);
+    let playlist = if app.library.whole_library || recent { None } else { app.library.selected };
+    // The recent list shows the newest first until a column is clicked.
+    let sort = user_sort(app).or(recent.then_some((Column::Added, true)));
     let l = &app.engine.library;
-    let key = Key { rev: l.rev, tracks: l.tracks.len(), playlist, query: app.library.query.clone(), columns: columns.to_vec() };
+    let key = Key { rev: l.rev, tracks: l.tracks.len(), playlist, recent, query: app.library.query.clone(), columns: columns.to_vec(), sort };
     if let Some((k, rows, understood, total)) = &app.library.cache
         && *k == key
     {
         return (rows.clone(), understood.clone(), *total);
     }
     let query = Query::parse(&app.library.query);
-    let total = l.listing(playlist).map_or(0, |v| v.len());
-    let lists = if playlist.is_none() && !query.is_empty() { Some(l.memberships()) } else { None };
+    let since = recent.then(|| now_secs().saturating_sub(RECENT_DAYS * 86_400));
+    let total = if recent {
+        l.find(None, &Query::default(), columns, since, None).map_or(0, |v| v.len())
+    } else {
+        l.listing(playlist).map_or(0, |v| v.len())
+    };
+    let lists = if playlist.is_none() && (!query.is_empty() || recent) { Some(l.memberships()) } else { None };
     let rows: Vec<Row> = l
-        .search(playlist, &query, columns)
+        .find(playlist, &query, columns, since, sort)
         .unwrap_or_default()
         .into_iter()
         .map(|(position, t)| Row {
@@ -533,6 +562,7 @@ fn widths(columns: &[Column], lists: bool, w: f32) -> (f32, Vec<(Column, f32)>, 
         Column::Key => Some(46.0),
         Column::Time => Some(54.0),
         Column::Rating => Some(66.0),
+        Column::Added => Some(78.0),
         _ => None,
     };
     let flex = |c: Column| match c {
@@ -546,6 +576,74 @@ fn widths(columns: &[Column], lists: bool, w: f32) -> (f32, Vec<(Column, f32)>, 
     let spare = (w - used).max(0.0);
     let cols = columns.iter().map(|c| (*c, fixed(*c).unwrap_or_else(|| if parts > 0.0 { spare * flex(*c) / parts } else { 0.0 }))).collect();
     (num, cols, lists_w)
+}
+
+/// The column titles: click one to sort lowest first, again for highest first, and a third time
+/// (or on #) for the playlist's own order. Returns where the titles end.
+fn sort_header(app: &mut SoundApp, ui: &mut Ui, head: Rect, num_w: f32, cols: &[(Column, f32)]) -> f32 {
+    let t = Tokens::current();
+    let mut cx = head.min.x + num_w;
+    let sorted = user_sort(app).or((app.library.selected == Some(RECENT) && !app.library.whole_library).then_some((Column::Added, true)));
+    let num_rect = Rect::from_min_max(head.min, pos2(head.min.x + num_w, head.max.y));
+    let num_resp = ui.interact(num_rect, ui.scope_id().with("library-sort-order"), Sense::click()).on_hover_text("Back to the playlist's own order");
+    ui.painter().text(
+        pos2(head.min.x + 10.0, head.center().y),
+        Align2::LEFT_CENTER,
+        "#",
+        bold(11.0),
+        if sorted.is_none() { t.accent } else { t.header_text },
+    );
+    if num_resp.clicked() {
+        app.ui.library_sort = None;
+    }
+    for (c, w) in cols {
+        let cell = Rect::from_min_max(pos2(cx, head.min.y), pos2(cx + w, head.max.y));
+        let here = sorted.filter(|(s, _)| s == c).map(|(_, d)| d);
+        let right = matches!(c, Column::Bpm | Column::Time);
+        let px = if right { cx + w - 22.0 } else { cx };
+        let colour = if here.is_some() { t.accent } else { t.header_text };
+        let g = ui.painter().layout_no_wrap(c.label().to_string(), bold(11.0), colour);
+        let gw = g.size().x;
+        let gx = if right { px - gw } else { px };
+        ui.painter().with_clip_rect(cell).galley(pos2(gx, head.center().y - g.size().y * 0.5), g, colour);
+        if let Some(descending) = here {
+            // A small triangle drawn in code: up for lowest first, down for highest first.
+            let ax = (gx + gw + 8.0).min(cell.max.x - 6.0);
+            let ay = head.center().y;
+            let pts = if descending {
+                vec![pos2(ax - 4.0, ay - 2.5), pos2(ax + 4.0, ay - 2.5), pos2(ax, ay + 3.0)]
+            } else {
+                vec![pos2(ax - 4.0, ay + 2.5), pos2(ax + 4.0, ay + 2.5), pos2(ax, ay - 3.0)]
+            };
+            ui.painter().with_clip_rect(cell).add(egui::Shape::convex_polygon(pts, t.accent, Stroke::NONE));
+        }
+        let resp = ui
+            .interact(cell, ui.scope_id().with(("library-sort", c.id())), Sense::click())
+            .on_hover_text("Sort: lowest first, then highest first, then your order");
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if resp.clicked() {
+            // Lowest first, then highest first, then back to the playlist's order.
+            match here {
+                None => {
+                    app.ui.library_sort = Some(c.id().to_string());
+                    app.ui.library_sort_desc = false;
+                }
+                Some(false) => {
+                    app.ui.library_sort = Some(c.id().to_string());
+                    app.ui.library_sort_desc = true;
+                }
+                Some(true) => {
+                    app.ui.library_sort = None;
+                    app.ui.library_sort_desc = false;
+                }
+            }
+            app.library.selected_row = None;
+        }
+        cx += w;
+    }
+    cx
 }
 
 fn tracks_panel(app: &mut SoundApp, ui: &mut Ui) {
@@ -608,7 +706,9 @@ fn tracks_panel(app: &mut SoundApp, ui: &mut Ui) {
     let info = Rect::from_min_size(pos2(full.min.x, bar.max.y), vec2(full.width(), 22.0));
     ui.painter().rect_filled(info, 0.0, t.panel_bg);
     ui.painter().line_segment([pos2(info.min.x, info.max.y), pos2(info.max.x, info.max.y)], Stroke::new(1.0, t.border));
-    let place = if app.library.whole_library || app.library.selected.is_none() {
+    let place = if !app.library.whole_library && app.library.selected == Some(RECENT) {
+        "the last 30 days".to_string()
+    } else if app.library.whole_library || app.library.selected.is_none() {
         "the whole library".to_string()
     } else {
         app.library.selected.and_then(|id| app.engine.library.node(id)).map_or_else(|| "the whole library".into(), |n| n.name.clone())
@@ -637,25 +737,12 @@ fn tracks_panel(app: &mut SoundApp, ui: &mut Ui) {
         if app.library.status.is_empty() { "Drag a track onto the timeline, or onto a playlist".to_string() } else { app.library.status.clone() };
     ui.painter().with_clip_rect(info).text(pos2(info.max.x - 10.0, info.center().y), Align2::RIGHT_CENTER, status, regular(10.5), t.text_dim);
     // Column titles.
-    let in_playlist = !app.library.whole_library && app.library.selected.is_some();
+    let in_playlist = !app.library.whole_library && app.library.selected.is_some_and(|s| s != RECENT);
     let show_lists = !in_playlist && !app.library.query.trim().is_empty();
     let head = Rect::from_min_size(pos2(full.min.x, info.max.y), vec2(full.width(), 20.0));
     ui.painter().rect_filled(head, 0.0, t.ruler_bg);
     let (num_w, cols, lists_w) = widths(&columns, show_lists, head.width() - 12.0);
-    let mut cx = head.min.x + num_w;
-    ui.painter().text(pos2(head.min.x + 10.0, head.center().y), Align2::LEFT_CENTER, "#", bold(11.0), t.header_text);
-    for (c, w) in &cols {
-        let right = matches!(c, Column::Bpm | Column::Time);
-        let px = if right { cx + w - 10.0 } else { cx };
-        ui.painter().with_clip_rect(Rect::from_min_max(pos2(cx, head.min.y), pos2(cx + w, head.max.y))).text(
-            pos2(px, head.center().y),
-            if right { Align2::RIGHT_CENTER } else { Align2::LEFT_CENTER },
-            c.label(),
-            bold(11.0),
-            t.header_text,
-        );
-        cx += w;
-    }
+    let cx = sort_header(app, ui, head, num_w, &cols);
     if show_lists {
         ui.painter().text(pos2(cx, head.center().y), Align2::LEFT_CENTER, "In playlist", bold(11.0), t.text_dim);
     }
@@ -742,6 +829,9 @@ fn track_row(
             Column::Bpm | Column::Time => {
                 let text = if *c == Column::Bpm { row.track.bpm().map_or("—".into(), |b| b.to_string()) } else { format_time(row.track.seconds) };
                 p.text(pos2(x + w - 10.0, r.center().y), Align2::RIGHT_CENTER, text, mono(11.0), if *c == Column::Bpm { fg } else { t.text_dim });
+            }
+            Column::Added => {
+                p.text(pos2(x, r.center().y), Align2::LEFT_CENTER, c.text(&row.track), mono(11.0), t.text_dim);
             }
             Column::Rating => {
                 // Five dots, the rated ones lit.

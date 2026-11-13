@@ -42,8 +42,26 @@ pub struct Track {
     pub seconds: u32,
     /// The audio file, when the Music app knows it.
     pub path: Option<String>,
+    /// When it was added to the Music app, in seconds since 1970 (UTC).
+    pub added: Option<u64>,
     /// What a rekordbox export says about this track; it wins over the Music app's BPM and key.
     pub rb: Option<RbInfo>,
+}
+
+/// Seconds since 1970 from an RFC 3339 time (`2026-11-05T20:45:46.000Z`) or a date
+/// (`2026-11-05`, read as midnight UTC). Times before 1970 or unreadable text give `None`.
+pub fn parse_date(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if let Ok(t) = chrono::DateTime::parse_from_rfc3339(s) {
+        return u64::try_from(t.timestamp()).ok();
+    }
+    let d = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()?;
+    u64::try_from(d.and_hms_opt(0, 0, 0)?.and_utc().timestamp()).ok()
+}
+
+/// `05.11.26` (day, month, year, UTC).
+pub fn format_date(secs: u64) -> String {
+    i64::try_from(secs).ok().and_then(|s| chrono::DateTime::from_timestamp(s, 0)).map_or_else(String::new, |t| t.format("%d.%m.%y").to_string())
 }
 
 /// A cue point from rekordbox: a hot cue (`hot`: its pad) or a memory cue, maybe a loop.
@@ -70,6 +88,8 @@ pub struct RbInfo {
     pub comment: String,
     pub play_count: u32,
     pub cues: Vec<Cue>,
+    /// When it was added to rekordbox, in seconds since 1970.
+    pub added: Option<u64>,
 }
 
 /// Tracks only rekordbox knows have ids starting with this, then their file path.
@@ -94,6 +114,11 @@ impl Track {
         self.rb.as_ref().map_or("", |r| r.comment.as_str())
     }
 
+    /// When it was added: to the Music app, else to rekordbox.
+    pub fn added(&self) -> Option<u64> {
+        self.added.or_else(|| self.rb.as_ref().and_then(|r| r.added))
+    }
+
     pub fn colour(&self) -> Option<[u8; 3]> {
         self.rb.as_ref().and_then(|r| r.colour)
     }
@@ -102,6 +127,49 @@ impl Track {
     pub fn from_rekordbox_only(&self) -> bool {
         self.id.starts_with(REKORDBOX_ID)
     }
+}
+
+/// A key's place on the wheel for sorting: 1A, 1B, 2A, … 12B; no key sorts after all keys.
+fn key_order(k: Option<&str>) -> u32 {
+    k.and_then(search::wheel_key).map_or(u32::MAX, |k| {
+        let (n, l) = k.split_at(k.len().saturating_sub(1));
+        n.parse::<u32>().unwrap_or(99) * 2 + u32::from(l == "B")
+    })
+}
+
+/// Sorts rows by a column, ascending or descending. Tracks with nothing in that column (no BPM,
+/// no key, no date) always come last; ties keep the playlist's order.
+pub fn sort_tracks(rows: &mut [(usize, &Track)], col: Column, descending: bool) {
+    use std::cmp::Ordering;
+    let num = |t: &Track| -> Option<u64> {
+        match col {
+            Column::Bpm => t.bpm().map(u64::from),
+            Column::Time => Some(u64::from(t.seconds)),
+            Column::Rating => Some(u64::from(t.rating())),
+            Column::Added => t.added(),
+            Column::Key => Some(u64::from(key_order(t.key()))).filter(|k| *k != u64::from(u32::MAX)),
+            _ => None,
+        }
+    };
+    let textual = matches!(col, Column::Title | Column::Artist | Column::Genre | Column::Comment);
+    rows.sort_by(|(ia, a), (ib, b)| {
+        let ord = if textual {
+            let (x, y) = (col.text(a).to_lowercase(), col.text(b).to_lowercase());
+            match (x.is_empty(), y.is_empty()) {
+                (true, false) => return Ordering::Greater,
+                (false, true) => return Ordering::Less,
+                _ => x.cmp(&y),
+            }
+        } else {
+            match (num(a), num(b)) {
+                (Some(x), Some(y)) => x.cmp(&y),
+                (None, Some(_)) => return Ordering::Greater,
+                (Some(_), None) => return Ordering::Less,
+                (None, None) => Ordering::Equal,
+            }
+        };
+        (if descending { ord.reverse() } else { ord }).then(ia.cmp(ib))
+    });
 }
 
 /// A file path for matching: Unicode NFC (macOS paths may come decomposed) and lower case.
@@ -373,6 +441,26 @@ impl Library {
         Ok(self.listing(playlist)?.into_iter().filter(|(_, t)| query.matches(t, shown)).collect())
     }
 
+    /// [`Self::search`], keeping only tracks added since `since` (seconds since 1970) when
+    /// given, then sorted by `sort` (ascending, or descending), else in the playlist's order.
+    pub fn find(
+        &self,
+        playlist: Option<u64>,
+        query: &Query,
+        shown: &[Column],
+        since: Option<u64>,
+        sort: Option<(Column, bool)>,
+    ) -> Result<Vec<(usize, &Track)>, String> {
+        let mut hits = self.search(playlist, query, shown)?;
+        if let Some(since) = since {
+            hits.retain(|(_, t)| t.added().is_some_and(|a| a >= since));
+        }
+        if let Some((col, descending)) = sort {
+            sort_tracks(&mut hits, col, descending);
+        }
+        Ok(hits)
+    }
+
     /// The playlists each track is in, by track id, for whole-library results.
     pub fn memberships(&self) -> std::collections::HashMap<&str, Vec<&str>> {
         let mut m: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
@@ -465,6 +553,7 @@ impl Library {
                 comment: rt.comment.clone(),
                 play_count: rt.play_count,
                 cues: rt.cues.clone(),
+                added: rt.added,
             };
             let pkey = rt.path.as_deref().map(path_key);
             let found = pkey.as_ref().and_then(|p| by_path.get(p).copied()).or_else(|| {
@@ -496,6 +585,7 @@ impl Library {
                             genre: rt.genre.clone(),
                             seconds: rt.seconds,
                             path: Some(path.clone()),
+                            added: None,
                             rb: Some(info),
                         });
                         by_path.insert(path_key(path), self.tracks.len() - 1);

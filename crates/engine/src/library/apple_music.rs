@@ -18,10 +18,10 @@ function run(argv) {
   const lists = music.userPlaylists.whose({name: argv[0]});
   if (lists.length === 0) return JSON.stringify({error: 'missing'});
   const t = lists[0].fileTracks;
-  if (t.length === 0) return JSON.stringify({id: [], name: [], artist: [], bpm: [], genre: [], duration: [], comment: [], location: []});
+  if (t.length === 0) return JSON.stringify({id: [], name: [], artist: [], bpm: [], genre: [], duration: [], comment: [], location: [], added: []});
   let location;
   try { location = t.location().map(l => l ? String(l) : ''); } catch (e) { location = []; }
-  return JSON.stringify({id: t.persistentID(), name: t.name(), artist: t.artist(), bpm: t.bpm(), genre: t.genre(), duration: t.duration(), comment: t.comment(), location: location});
+  return JSON.stringify({id: t.persistentID(), name: t.name(), artist: t.artist(), bpm: t.bpm(), genre: t.genre(), duration: t.duration(), comment: t.comment(), location: location, added: t.dateAdded()});
 }"#;
     let out = std::process::Command::new("/usr/bin/osascript")
         .args(["-l", "JavaScript", "-e", SCRIPT, name])
@@ -58,6 +58,7 @@ struct Columns {
     duration: Vec<serde_json::Value>,
     comment: Vec<serde_json::Value>,
     location: Vec<serde_json::Value>,
+    added: Vec<serde_json::Value>,
 }
 
 fn text(v: Option<&serde_json::Value>) -> String {
@@ -92,6 +93,7 @@ pub(crate) fn parse(json: &[u8], name: &str) -> Result<Vec<Track>, String> {
             genre: text(c.genre.get(i)),
             seconds,
             path: (!path.is_empty()).then_some(path),
+            added: c.added.get(i).and_then(serde_json::Value::as_str).and_then(super::parse_date),
             rb: None,
         });
     }
@@ -104,13 +106,15 @@ mod tests {
 
     #[test]
     fn reads_the_scripts_columns() {
-        let json = br#"{"id":["A1","B2"],"name":["Siren (Original Mix)",null],"artist":["Rancido",""],"bpm":[120,0],"genre":["Afro House",""],"duration":[408.4,"x"],"comment":["7A - Energy 6","6"],"location":["/Music/siren.mp3",""]}"#;
+        let json = br#"{"id":["A1","B2"],"name":["Siren (Original Mix)",null],"artist":["Rancido",""],"bpm":[120,0],"genre":["Afro House",""],"duration":[408.4,"x"],"comment":["7A - Energy 6","6"],"location":["/Music/siren.mp3",""],"added":["2026-11-05T20:45:46.000Z","junk"]}"#;
         let t = parse(json, "DJ").unwrap_or_default();
         assert_eq!(t.len(), 2);
         assert_eq!(t[0].bpm, Some(120));
         assert_eq!(t[0].key.as_deref(), Some("7A"));
         assert_eq!(t[0].seconds, 408);
         assert_eq!(t[0].path.as_deref(), Some("/Music/siren.mp3"));
+        assert_eq!(t[0].added, Some(1_793_911_546));
+        assert_eq!(t[1].added, None);
         assert_eq!((t[1].bpm, t[1].key.clone(), t[1].seconds, t[1].path.clone()), (None, None, 0, None), "a bare energy number is not a key");
     }
 

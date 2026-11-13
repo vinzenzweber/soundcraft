@@ -94,6 +94,10 @@ pub struct UiState {
     pub show_dj_library: bool,
     /// The DJ Library's shown columns, which its search looks in: title, artist, bpm, key, genre, time.
     pub library_columns: Vec<String>,
+    /// The DJ Library column its list is sorted by (a column id), or none for the playlist's order.
+    pub library_sort: Option<String>,
+    /// Whether that sort is highest (or newest) first.
+    pub library_sort_desc: bool,
     pub show_universe: bool,
     pub narrow_mix: bool,
     /// Mix window sections: inserts_ae, inserts_fj, sends_ae, sends_fj, io, comments, eq_curve, color.
@@ -177,6 +181,8 @@ impl Default for UiState {
             show_midi_editor: false,
             show_dj_library: false,
             library_columns: soundcraft_engine::library::search::Column::DEFAULT.iter().map(|c| c.id().to_string()).collect(),
+            library_sort: None,
+            library_sort_desc: false,
             show_universe: false,
             narrow_mix: false,
             mix_views: vec!["inserts_ae".into(), "sends_ae".into(), "io".into(), "color".into()],

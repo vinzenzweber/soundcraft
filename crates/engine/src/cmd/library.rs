@@ -29,7 +29,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Search DJ Library",
             [],
             None,
-            "{query?: text, playlist?: id (a folder searches its playlists; omit for the whole library), columns?: [title, artist, bpm, key, genre, time, rating, comment] (the shown columns plain words search; default title, artist, bpm, key), offset?: 0, limit?: 200 (max 10000)} — words match any shown column; 120-124 is a BPM range, 8A a key, column:value one column (bpm:>125, time:<4:00, genre:afro, rating:>3), -word leaves out. Returns total, matched, how each word was read, and the tracks: id, position in the playlist, title, artist, bpm, key, genre, time, seconds, path, playlists",
+            "{query?: text, playlist?: id (a folder searches its playlists; omit for the whole library), columns?: [title, artist, bpm, key, genre, time, rating, comment, added] (the shown columns plain words search; default title, artist, bpm, key), sort?: a column (title, artist, bpm, key, genre, time, rating, comment, added), descending?: false, added_within_days?: n (only tracks added in the last n days), offset?: 0, limit?: 200 (max 10000)} — words match any shown column; 120-124 is a BPM range, 8A a key, column:value one column (bpm:>125, time:<4:00, genre:afro, rating:>3), -word leaves out. Returns total, matched, how each word was read, and the tracks: id, position in the playlist, title, artist, bpm, key, genre, time, seconds, path, playlists",
             super::always,
             search
         ),
@@ -158,8 +158,13 @@ fn save(e: &mut Engine) {
     }
 }
 
+/// Seconds since 1970. The web build has no system clock here (`SystemTime::now` would panic
+/// there), so it reads 0 and dates simply go unrecorded.
 fn now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+    #[cfg(not(target_arch = "wasm32"))]
+    return std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    #[cfg(target_arch = "wasm32")]
+    0
 }
 
 fn tree(e: &mut Engine, _: &Value) -> Result<Value> {
@@ -191,7 +196,7 @@ pub fn columns_param(id: &str, p: &Value) -> Result<Vec<Column>> {
         .map(|c| {
             c.as_str()
                 .and_then(Column::parse)
-                .ok_or_else(|| bad(id, format!("unknown column {c} (title, artist, bpm, key, genre, time, rating, comment)")))
+                .ok_or_else(|| bad(id, format!("unknown column {c} (title, artist, bpm, key, genre, time, rating, comment, added)")))
         })
         .collect()
 }
@@ -210,6 +215,7 @@ pub fn track_json(t: &Track, position: usize, lists: Option<&Vec<&str>>) -> Valu
         "play_count": t.rb.as_ref().map_or(0, |r| r.play_count),
         "cues": t.rb.as_ref().map_or(0, |r| r.cues.len()),
         "rekordbox_only": t.from_rekordbox_only(),
+        "added": t.added().map(library::format_date),
         "genre": t.genre,
         "time": format_time(t.seconds),
         "seconds": t.seconds,
@@ -225,9 +231,14 @@ fn search(e: &mut Engine, p: &Value) -> Result<Value> {
     let playlist = opt_node(ID, p, "playlist")?;
     let offset = usize::try_from(p.get("offset").and_then(Value::as_u64).unwrap_or(0)).unwrap_or(usize::MAX);
     let limit = usize::try_from(p.get("limit").and_then(Value::as_u64).unwrap_or(200).min(MAX_LIMIT)).unwrap_or(0);
+    let sort = match str_param(p, "sort") {
+        None => None,
+        Some(c) => Some((Column::parse(c).ok_or_else(|| bad(ID, format!("unknown sort column `{c}`")))?, super::bool_or(p, "descending", false))),
+    };
+    let since = p.get("added_within_days").and_then(Value::as_u64).map(|days| now().saturating_sub(days.min(100_000).saturating_mul(86_400)));
     let l = &e.library;
     let total = l.listing(playlist).map_err(err(ID))?.len();
-    let hits = l.search(playlist, &query, &columns).map_err(err(ID))?;
+    let hits = l.find(playlist, &query, &columns, since, sort).map_err(err(ID))?;
     let lists = l.memberships();
     let tracks: Vec<Value> = hits.iter().skip(offset).take(limit).map(|(i, t)| track_json(t, *i, lists.get(t.id.as_str()))).collect();
     Ok(json!({"total": total, "matched": hits.len(), "understood": query.describe(), "tracks": tracks}))
@@ -372,6 +383,7 @@ mod tests {
             genre: genre.into(),
             seconds: 300,
             path: None,
+            added: None,
             rb: None,
         };
         e.offer_library(
@@ -490,6 +502,44 @@ mod tests {
         let _ = std::fs::write(&xml, "<not rekordbox/>");
         assert!(e.execute("library.import_rekordbox", &json!({"path": xml.to_string_lossy()})).is_err());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn sorts_by_any_column_and_finds_recent_additions() {
+        let mut e = Engine::default();
+        let day = 86_400;
+        let t = |id: &str, bpm: Option<u16>, key: Option<&str>, days_ago: Option<u64>| Track {
+            id: id.into(),
+            title: id.to_uppercase(),
+            bpm,
+            key: key.map(str::to_string),
+            added: days_ago.map(|d| now().saturating_sub(d * day)),
+            ..Track::default()
+        };
+        e.offer_library(
+            "DJ",
+            Ok(vec![
+                t("a", Some(128), Some("12A"), Some(40)),
+                t("b", None, None, None),
+                t("c", Some(94), Some("1B"), Some(2)),
+                t("d", Some(120), Some("1A"), Some(10)),
+            ]),
+        );
+        assert!(e.execute("library.sync", &json!({"playlist": "DJ"})).is_ok());
+        let ids = |e: &mut Engine, p: Value| -> Vec<String> {
+            e.execute("library.search", &p).unwrap_or_default()["tracks"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|t| t["id"].as_str().map(str::to_string)).collect())
+                .unwrap_or_default()
+        };
+        assert_eq!(ids(&mut e, json!({"sort": "bpm"})), ["c", "d", "a", "b"], "lowest first, no BPM last");
+        assert_eq!(ids(&mut e, json!({"sort": "bpm", "descending": true})), ["a", "d", "c", "b"], "highest first, no BPM still last");
+        assert_eq!(ids(&mut e, json!({"sort": "key"})), ["d", "c", "a", "b"], "wheel order 1A, 1B, … 12A");
+        assert_eq!(ids(&mut e, json!({"sort": "added", "descending": true})), ["c", "d", "a", "b"], "newest first");
+        assert_eq!(ids(&mut e, json!({"added_within_days": 30, "sort": "added", "descending": true})), ["c", "d"]);
+        assert_eq!(ids(&mut e, json!({})), ["a", "b", "c", "d"], "no sort keeps the playlist's order");
+        assert!(e.execute("library.search", &json!({"sort": "nope"})).is_err());
+        assert!(e.execute("library.search", &json!({"added_within_days": u64::MAX})).is_ok());
     }
 
     #[test]

@@ -23,6 +23,7 @@ soundcraft-video.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 quick-xml.workspace = true
+chrono.workspace = true
 percent-encoding.workspace = true
 unicode-normalization.workspace = true
 thiserror.workspace = true
